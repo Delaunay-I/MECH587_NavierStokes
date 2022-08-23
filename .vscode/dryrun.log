@@ -1,0 +1,6 @@
+make --dry-run --keep-going --print-directory
+make: Entering directory '/home/mirshahi/MECH587_NavierStokes'
+echo Making NavierStokes from NavierStokes.cpp allocation_IO.cpp validation_functions.cpp tri_test.cpp DMD.cxx DMD.h
+mpic++ -g  NavierStokes.cpp allocation_IO.cpp validation_functions.cpp tri_test.cpp DMD.cxx DMD.h -o NavierStokes.o -I//usr/anslab/src/slepc-3.7.3/include -I//usr/anslab/src/slepc-3.7.3/arch-linux2-cxx-debug/include -I//usr/anslab/src/petsc/arch-linux2-cxx-debug/include -I//usr/anslab/src/petsc/include -L//usr/anslab/src/slepc-3.7.3/lib -L//usr/anslab/src/petsc/arch-linux2-cxx-debug/lib 
+make: Leaving directory '/home/mirshahi/MECH587_NavierStokes'
+ 

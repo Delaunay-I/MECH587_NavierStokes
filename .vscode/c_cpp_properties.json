@@ -1,0 +1,56 @@
+{
+    "env": {
+        "myDefaultIncludePath": [
+            "${workspaceFolder}",
+            "/usr/anslab/src/petsc/include",
+            "${PETSC_ARCH_DIR}/include"
+        ],
+        "myCompilerPath": "/usr/local/bin/gcc-7",
+        "PETSC_DIR": "/usr/anslab/src/petsc",
+        "PETSC_ARCH": "arch-linux2-cxx-debug",
+        "SLEPC_DIR": "/usr/anslab/src/slepc"
+    },
+    "configurations": [
+        {
+            "name": "Linux",
+            "intelliSenseMode": "linux-gcc-x64",
+            "includePath": [
+                "/usr/lib/**",
+                "${PETSC_DIR}/include",
+                "${PETSC_DIR}/${PETSC_ARCH}/include",
+                "${PETSC_DIR}/${PETSC_ARCH}/lib",
+                "${SLEPC_DIR}/include",
+                "${SLEPC_DIR}/${PETSC_ARCH}/include",
+                "${SLEPC_DIR}/lib",
+                "/usr/lib/x86_64-linux-gnu/openmpi/include"
+            ],
+            "macFrameworkPath": [
+                "/System/Library/Frameworks"
+            ],
+            "defines": [
+                "FOO",
+                "BAR=100"
+            ],
+            "forcedInclude": [
+                "${workspaceFolder}/include/config.h"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "compileCommands": "/path/to/compile_commands.json",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}"
+                ],
+                "limitSymbolsToIncludedHeaders": true,
+                "databaseFilename": ""
+            },
+            "compilerArgs": [
+                "-g -lblas -llapack -llapacke -lslepc -L/usr/lib -lparpack -lm -lmpi",
+                "-L${PETSC_ARCH_DIR}/lib -Wl,-rpath=${PETSC_ARCH_DIR}/lib"
+            ],
+            "configurationProvider": "ms-vscode.makefile-tools"
+        }
+    ],
+    "version": 4
+}
