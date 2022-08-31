@@ -16,6 +16,11 @@
 #include <complex.h>
 #include <cassert>
 
+#include <bits/stdc++.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fstream>
+
 #include <petscksp.h>
 #include <slepcsvd.h>
 #include <slepceps.h>
@@ -25,18 +30,50 @@
 //#define DEBUG_DMD
 //#define DEBUG_DMD_EPS
 #define PRINT_EIGENVALUES
+#define DMD_CHECK_EIGS
 #define DMD_SIGMARATIO
+#define CALC_CONDITION_NUMBER_OF_UPDATE
 
 class DMD {
+private:
+	PetscInt *row_index{};
+	PetscInt svdRank{}; //number of columns in SVD modes, also the truncation of SVD
+	PetscInt iNumModes{};
+	PetscReal dt;
+	FILE* fLog;
+
+	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
+	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL;
+
+	Vec update = NULL;
+
+
+	struct _svd{
+		Mat Ur = PETSC_NULL, Sr = PETSC_NULL, Vr = PETSC_NULL;
+		Mat Sr_inv = NULL, W = NULL;
+		std::vector<std::complex<double>> eigs;
+	};
+
+	struct _DATA{
+		const Mat  *mat{};
+		PetscInt num_cols, num_rows;
+	};
+
+	_svd lrSVD, fullSVD;
+	_DATA X;
+
+	const std::string DEB_MAT_DIR{"debug_tools/mats/"};
+	const std::string DEB_TOOL_DIR{"debug_tools/tools/"};
+
+	/* Count the number of times this class was called */
+	static int isDMD_execs;
+
 public:
-//	DMD(const UnstructuredMesh *pUnstructuredMesh, Physics *const phys,
-//			PetscReal DT, Mat *Data);
 
 	DMD(const Mat *Data, PetscInt iModes, PetscReal DT);
 	virtual ~DMD();
 	PetscErrorCode prepareData();
 
-	PetscErrorCode solveSVD();
 	PetscErrorCode regression();
 	PetscErrorCode calcDMDmodes();
 	PetscErrorCode computeUpdate(PetscInt iMode);
@@ -57,8 +94,13 @@ public:
 	int iGetSVDRank() const {
 		return svdRank;
 	}
-
+	PetscErrorCode solveSVD(SVD& svd, Mat& mMatrix);
+	PetscErrorCode calcLowRankSVDApprox(SVD& svd, PetscInt rank, _svd& LowSVD, std::string sFileName,
+			bool squreMat = false);
+	PetscErrorCode calcBestFitlrSVD(_svd& LowSVD, Mat& mBestFit);
+	PetscErrorCode calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFileName, bool calcEigenvectors=false);
 	PetscErrorCode lapackMatInv(Mat &A);
+
 
 	/* -----  Print functions  ------ */
 	PetscErrorCode printMatMATLAB(std::string sFilename,
@@ -70,34 +112,15 @@ public:
 	PetscErrorCode printMatPYTHON(std::string sFilename,
 			std::string sMatrixName, Mat A) const;
 
-
-private:
-
-	const int reconOrder{};
-
-
-	PetscInt *row_index{};
-	PetscInt svdRank{}; //number of columns in SVD modes, also the truncation of SVD
-	PetscInt iNumModes{};
-	PetscReal dt;
-
-	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
-	Mat Ur = PETSC_NULL, Sr = PETSC_NULL, Vr = PETSC_NULL;
-	Mat Sr_inv = NULL, W = NULL;
-	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL;
-
-	Vec update = NULL;
-
-	std::vector<std::complex<double>> eigs;
-
-	struct _DATA{
-		const Mat  *mat{};
-		PetscInt num_cols, num_rows;
-	};
-
-	_DATA X;
+	bool IsPathExist(const std::string &s)
+	{
+	  struct stat buffer;
+	  return (stat (s.c_str(), &buffer) == 0);
+	}
 
 };
+
+
 
 
 #endif /* APPS_CONVRATESPEEDUP_DMD_H_ */
