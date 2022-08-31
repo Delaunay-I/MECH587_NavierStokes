@@ -516,9 +516,10 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 		}
 		if (j < numCols - 1) {
 			sig1 = sigma;
-			if (j == 0){
+			if (j == 0) {
 				out << sigma << std::endl;
-		}}
+			}
+		}
 
 		ierr = MatSetValue(LowSVD.Sr, j, j, sigma, INSERT_VALUES);	CHKERRQ(ierr);
 		ierr = VecGetValues(u, X1Rows, row_index, row_vec);		CHKERRQ(ierr);

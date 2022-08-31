@@ -5,6 +5,7 @@
 #include <math.h>
 #include <vector>
 #include <cassert>
+#include <algorithm>
 
 // #pragma warning(disable : 4996) //stop Visual studio giving errors about some GCC compiler differences
 
@@ -14,7 +15,7 @@
 /* Setting up mesh size */
 #define IMAX 16  //number of nodes in the X direction
 #define JMAX 40 //number of nodes in the Y direction
-#define dT 0.05
+extern double dT;
 
 #define MAX_ITER 2500
 

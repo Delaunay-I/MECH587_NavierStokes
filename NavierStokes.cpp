@@ -21,8 +21,19 @@ struct _snapshots_type{
 
 
 /* DMD added Functions */
+PetscErrorCode readOpts(PetscReal& dT, PetscInt& max_iter_total, PetscBool flg_DMD, PetscInt& nDMD, PetscInt* dmdIter);
 PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap);
 PetscErrorCode updateSolutionMatrix(Vec& vec, _snapshots_type& snap);
+
+/* -----  Print functions  ------ */
+PetscErrorCode printMatMATLAB(std::string sFilename,
+		std::string sMatrixName, Mat A);
+PetscErrorCode printVecMATLAB(std::string sFileName,
+		std::string sVectorName, Vec V);
+PetscErrorCode printVecPYTHON(std::string sFileName,
+		std::string sVectorName, Vec V);
+PetscErrorCode printMatPYTHON(std::string sFilename,
+		std::string sMatrixName, Mat A);
 
 /* declaring global variables */
 double*** Soln{}, *** dSoln{}, ***Soln2{};
@@ -31,6 +42,9 @@ double*** FI{};
 /* 4D arrays */
 double**** Bx{}, **** Cx{}, **** Ax{};
 double**** By{}, **** Cy{}, **** Ay{};
+
+double dT{0.05};
+
 
 /* -----------Initializing the solution-------- */
 void initialize(double*** Soln, double*** dSoln) {
@@ -170,7 +184,7 @@ void calc_residual(double*** Soln, double*** FI) {
 /* -----------calculating      Ax, Bx, Cx ------and----- Ay, By, Cy   ---------- */
 void calc_fluxJacobians(double*** Soln, double**** Bx, double**** Cx, double**** Ax,
 	double**** By, double**** Cy, double**** Ay) {
-
+	PetscErrorCode ierr;
 	/*double FFJ1[IMAX + 2][JMAX + 2][3][3]{}, FFJ2[IMAX + 2][JMAX + 2][3][3]{};
 	double GFJ1[IMAX + 2][JMAX + 2][3][3]{}, GFJ2[IMAX + 2][JMAX + 2][3][3]{};*/
 
@@ -193,7 +207,6 @@ void calc_fluxJacobians(double*** Soln, double**** Bx, double**** Cx, double****
 			FFJ2[i][j][2][0] = 0;	FFJ2[i][j][2][1] = (Soln[I_][j][2] + Soln[I_ + 1][j][2]) / 4.0;				    FFJ2[i][j][2][2] = (Soln[I_][j][1] + Soln[I_ + 1][j][1]) / 4.0 - 1.0 / (dX * Re);
 		}
 	}
-
 	/* Calculating 2 types of Flux Jacobian for Y direction */
 	for (int i = 1; i < IMAX + 1; i++) {
 		for (int j = 1; j < JMAX + 2; j++) {
@@ -434,6 +447,9 @@ double ApproximateFactorization(double*** Soln, double*** FI) {
 int main(int argc, char **argv) {
 	PetscErrorCode ierr;
 	PetscMPIInt size;
+	FILE* out{};
+	FILE* residual, * solution;
+	PetscBool flg;
 
 	ierr = SlepcInitialize(&argc, &argv, (char*) 0, (char*) 0); CHKERRQ(ierr);
 	if (ierr)
@@ -441,32 +457,76 @@ int main(int argc, char **argv) {
 
 	ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
 
-	FILE* out{};
-	FILE* residual, * solution;
+	PetscInt numIters, iDMD, *dmdIter;
+	PetscBool flg_DMD;
+
+//	ierr = readOpts(dT, numIters, flg_DMD, iDMD, dmdIter); CHKERRQ(ierr);
+
+	ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &dT, &flg); CHKERRQ(ierr);
+	if (!flg) {
+		ierr = PetscErrorPrintf("Missing -dt option!\n"); CHKERRQ(ierr);
+	}
+
+	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-max_iter_total",&numIters, &flg); CHKERRQ(ierr);
+		if (!flg){
+			PetscErrorPrintf("Missing -max_iter_total flag!\n");
+//			exit(1);
+		}
+
+		ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);CHKERRQ(ierr);
+
+		if (flg_DMD) {
+			ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &iDMD, NULL); CHKERRQ(ierr);
+			ierr = PetscMalloc1(iDMD + 1, &dmdIter); CHKERRQ(ierr);
+			dmdIter[iDMD] = numIters;
+
+			ierr = PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_its", dmdIter, &iDMD, &flg);CHKERRQ(ierr);
+			if (flg) {
+				if (iDMD < 1) {
+					PetscErrorPrintf("Incorrect argument for -DMD_its\n");
+					exit(1);
+				}
+			}
+			std::sort(dmdIter, dmdIter + iDMD + 1);
+		} else {
+			iDMD = 0;
+			ierr = PetscMalloc1(iDMD + 1, &dmdIter);
+			CHKERRQ(ierr);
+			dmdIter[iDMD] = numIters;
+		}
 
 	memory_allocation();
 
 	/* initializing P, u, and v with the initial conditions */
 	initialize(Soln, dSoln);
 	
-	int iter{};
+	Mat mJac;
+	ierr = MatCreate(PETSC_COMM_WORLD, &mJac); CHKERRQ(ierr);
+	ierr = MatSetSizes(mJac, PETSC_DECIDE, PETSC_DECIDE, 9, 9); CHKERRQ(ierr);
+	ierr = MatSetType(mJac, MATAIJ); CHKERRQ(ierr);
+	ierr = MatSetUp(mJac); CHKERRQ(ierr);
+
 	double MaxChange{};
+	int iter{1};
 	residual = fopen("Residuals.dat", "w");
 	solution = fopen("solution.dat", "w");
 	fprintf(solution, "%4s %14s %14s %14s\n", "iter", "dP", "dU", "dV");
+
 
 	_snapshots_type snap;
 	Vec vvGlobal;
 
 	/* Implicit time advance of the Navier--Stokes system */
-	do
-	{
-		iter++;
+	for (int iDMD = 0; iDMD < iDMD + 1; iDMD++) {
+		for (; iter <= dmdIter[iDMD]; iter++) {
+
+//		iter++;
 		calc_residual(Soln, FI);
 		calc_fluxJacobians(Soln, Bx, Cx, Ax, By, Cy, Ay);
 
 		MaxChange = ApproximateFactorization(Soln, FI);
 		fprintf(residual, "%4d %12.5G\n", iter, MaxChange);
+		ierr = PetscPrintf(PETSC_COMM_WORLD, "iter: %i dT: %3f fnorm: %6e\n", iter, dT, MaxChange); CHKERRQ(ierr);
 
 		get_l2norm(solution, iter);
 
@@ -474,16 +534,67 @@ int main(int argc, char **argv) {
 
 		ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX*JMAX*3, &vvGlobal); CHKERRQ(ierr);
 		/* --------Not including the BCs-------- */
-		for (int i = 1; i <= IMAX; i++)
+		for (int i = 1, index = 0; i <= IMAX; i++)
 			for (int j = 1; j <= JMAX; j++)
-				for (int k = 0; k < 3; k++) {
+				for (int k = 0; k < 3; k++, index++) {
 					PetscScalar value = FI[i][j][k];
-					ierr = VecSetValue(vvGlobal, i - 1, value, INSERT_VALUES); CHKERRQ(ierr);
+					ierr = VecSetValue(vvGlobal, index, value, INSERT_VALUES); CHKERRQ(ierr);
 				}
-		if (iter == 1)
-			ierr = initSnapsMat(vvGlobal, snap); CHKERRQ(ierr);
 
-	} while (iter < MAX_ITER && MaxChange > Tol);
+		if (iter == 1 && flg_DMD){
+			ierr = initSnapsMat(vvGlobal, snap); CHKERRQ(ierr);
+		} else if (flg_DMD) {
+			ierr = updateSolutionMatrix(vvGlobal, snap); CHKERRQ(ierr);
+		}
+		if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
+					ierr = printVecMATLAB("FI", "FI", vvGlobal); CHKERRQ(ierr);
+				}
+
+		if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
+
+			FILE* fLOG;
+			fLOG = fopen("Log.dat", "a");
+			fprintf(fLOG, "iter: %i\t", iter);
+			fclose(fLOG);
+
+			PetscInt inumDMDModes;
+			ierr = PetscOptionsGetInt(NULL, NULL, "-num_dmdModes", &inumDMDModes, &flg); CHKERRQ(ierr);
+			if (!flg) {
+				PetscErrorPrintf("Did you set the number of modes to eliminate?\n"
+						" Setting it to 1: for regress model only.\n\n");
+				inumDMDModes = 1;
+			}
+
+			PetscReal dTimeStep = dT;
+			DMD a_dmd(&snap.mat, inumDMDModes, dTimeStep);
+
+			ierr = a_dmd.applyDMDMatTrans(); CHKERRQ(ierr);
+
+			const Mat mDMDModes = a_dmd.mGetDMDModes();
+			Vec vUpdate{};
+			vUpdate = a_dmd.vgetUpdate();
+			ierr = printVecMATLAB("update", "vUpdate", vUpdate); CHKERRQ(ierr);
+
+			for (int i = 1, index = 0; i <= IMAX; i++)
+				for (int j = 1; j <= JMAX; j++)
+					for (int k = 0; k < 3; k++, index++) {
+						PetscScalar value{};
+						ierr = VecGetValues(vUpdate, 1, &index, &value); CHKERRQ(ierr);
+						FI[i][j][k] = value;
+						Soln[i][j][k] += value;
+					}
+		}
+
+
+
+		if (MaxChange < 1.e-10 || iter == numIters) {
+			ierr = PetscPrintf(PETSC_COMM_WORLD, "Converged to satisfactory point!!\n"); CHKERRQ(ierr);
+			goto outNest;
+			}
+		}
+	}
+outNest:
+
 
 	fclose(residual);
 	fclose(solution);
@@ -494,6 +605,7 @@ int main(int argc, char **argv) {
 	write_sym_plot_u(out, "symmetry_u.dat", Soln, JMAX + 2);
 
 
+	ierr = MatDestroy(&mJac); CHKERRQ(ierr);
 	memory_deallocate();
 	ierr = SlepcFinalize(); CHKERRQ(ierr);
 
@@ -530,14 +642,55 @@ void get_l2norm(FILE* solution, int iter) {
 		iter, l2norm._1, l2norm._2, l2norm._3);
 }
 
+PetscErrorCode readOpts(PetscReal& dT, PetscInt& max_iter_total, PetscBool flg_DMD, PetscInt& nDMD, PetscInt* dmdIter) {
+	PetscErrorCode ierr;
+	PetscBool flg;
+
+	ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &dT, &flg); CHKERRQ(ierr);
+	if (!flg) {
+		ierr = PetscErrorPrintf("Missing -dt option!\n"); CHKERRQ(ierr);
+
+	}
+
+	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-max_iter_total",&max_iter_total, &flg); CHKERRQ(ierr);
+		if (!flg){
+			PetscErrorPrintf("Missing -max_iter_total flag!\n");
+//			exit(1);
+		}
+
+		ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);CHKERRQ(ierr);
+
+		if (flg_DMD) {
+			ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &nDMD, NULL); CHKERRQ(ierr);
+			ierr = PetscMalloc1(nDMD + 1, &dmdIter); CHKERRQ(ierr);
+			dmdIter[nDMD] = max_iter_total;
+
+			ierr = PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_its", dmdIter, &nDMD, &flg);CHKERRQ(ierr);
+			if (flg) {
+				if (nDMD < 1) {
+					PetscErrorPrintf("Incorrect argument for -DMD_its\n");
+					exit(1);
+				}
+			}
+			std::sort(dmdIter, dmdIter + nDMD + 1);
+		} else {
+			nDMD = 0;
+			ierr = PetscMalloc1(nDMD + 1, &dmdIter);
+			CHKERRQ(ierr);
+			dmdIter[nDMD] = max_iter_total;
+		}
+		return ierr;
+}
 
 PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
 	PetscErrorCode ierr;
 	PetscBool flg;
 
 	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-svd_ncv", &snap.iNumCols, &flg);CHKERRQ(ierr);
-		if (!flg)
+		if (!flg){
 			PetscErrorPrintf("Missing -svd_ncv flag!\n");
+			exit(2);
+		}
 
 	// Getting the number of rows of each snapshot data
 	ierr = VecGetSize(vec, &snap.iNumRows);CHKERRQ(ierr);
@@ -607,5 +760,73 @@ PetscErrorCode updateSolutionMatrix(Vec& vec, _snapshots_type& snap) {
 
 	return ierr;
 }
+
+PetscErrorCode printVecMATLAB(std::string sFileName,
+		std::string sVectorName, Vec V) {
+	PetscErrorCode ierr;
+
+	std::string sName = sFileName + ".m";
+	PetscViewer viewer;
+	PetscObjectSetName((PetscObject) V, sVectorName.c_str());
+	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
+	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_MATLAB);
+	ierr = VecView(V, viewer);
+	CHKERRQ(ierr);
+	PetscViewerPopFormat(viewer);
+	PetscViewerDestroy(&viewer);
+
+	return ierr;
+}
+
+PetscErrorCode printMatMATLAB(std::string sFilename,
+		std::string sMatrixName, Mat A) {
+	PetscErrorCode ierr;
+
+	std::string sName = sFilename + ".m";
+	PetscViewer viewer;
+	PetscObjectSetName((PetscObject) A, sMatrixName.c_str());
+	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
+	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_MATLAB);
+	ierr = MatView(A, viewer);	CHKERRQ(ierr);
+	PetscViewerPopFormat(viewer);
+	PetscViewerDestroy(&viewer);
+
+	return ierr;
+}
+
+PetscErrorCode printVecPYTHON(std::string sFileName,
+		std::string sVectorName, Vec V) {
+	PetscErrorCode ierr;
+
+	std::string sName = sFileName + ".csv";
+	PetscViewer viewer;
+	PetscObjectSetName((PetscObject) V, sVectorName.c_str());
+	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
+	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_PYTHON);
+	ierr = VecView(V, viewer);
+	CHKERRQ(ierr);
+	PetscViewerPopFormat(viewer);
+	PetscViewerDestroy(&viewer);
+
+	return ierr;
+}
+
+PetscErrorCode printMatPYTHON(std::string sFilename,
+		std::string sMatrixName, Mat A) {
+	PetscErrorCode ierr;
+
+	std::string sName = sFilename + ".csv";
+	PetscViewer viewer;
+	PetscObjectSetName((PetscObject) A, sMatrixName.c_str());
+	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
+	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_PYTHON);
+	ierr = MatView(A, viewer);
+	CHKERRQ(ierr);
+	PetscViewerPopFormat(viewer);
+	PetscViewerDestroy(&viewer);
+
+	return ierr;
+}
+
 
 
