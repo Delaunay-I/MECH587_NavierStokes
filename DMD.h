@@ -27,12 +27,15 @@
 #include <cblas.h>
 #include <lapacke.h>
 
-//#define DEBUG_DMD
+#define DEBUG_DMD
 //#define DEBUG_DMD_EPS
 #define PRINT_EIGENVALUES
 #define DMD_CHECK_EIGS
 #define DMD_SIGMARATIO
 #define CALC_CONDITION_NUMBER_OF_UPDATE
+
+using ComplexNum = std::complex<double>;
+using ComplexSTLVec = std::vector<ComplexNum>;
 
 class DMD {
 private:
@@ -43,7 +46,7 @@ private:
 	FILE* fLog;
 
 	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
-	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL;
+	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL, time_dynamics_old = PETSC_NULL;
 
 	Vec update = NULL;
 
@@ -51,7 +54,7 @@ private:
 	struct _svd{
 		Mat Ur = PETSC_NULL, Sr = PETSC_NULL, Vr = PETSC_NULL;
 		Mat Sr_inv = NULL, W = NULL;
-		std::vector<std::complex<double>> eigs;
+		ComplexSTLVec eigs;
 	};
 
 	struct _DATA{

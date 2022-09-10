@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "../../MECH587_NavierStokes"
+		}
+	],
+	"settings": {
+		"terminal.integrated.env.linux": {
+			"PATH": "/home/mirshahi/.local/bin:/home/mirshahi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+			"PETSC_ARCH_DIR": "/usr/anslab/src/petsc/arch-linux2-cxx-debugecho ",
+			"SLEPC_DIR": "/usr/anslab/src/slepc"
+		},
+		"files.associations": {
+			"*.opt": "shellscript",
+			"string_view": "cpp",
+			"random": "cpp",
+			"functional": "cpp",
+			"iosfwd": "cpp",
+			"iostream": "cpp",
+			"limits": "cpp",
+			"streambuf": "cpp",
+			"*.tcc": "cpp"
+		}
+	}
+}

@@ -1,0 +1,14 @@
+# Directories
+Regress/
+Default/
+
+# Files to ignore
+*.dat
+*.o
+
+# Eclipse related directories
+.project
+.cproject
+.metadata/
+.settings/
+

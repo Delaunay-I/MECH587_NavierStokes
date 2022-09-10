@@ -26,7 +26,7 @@ DMD::DMD(const Mat *svdMat, PetscInt iModes, PetscReal DT) :
 
 	/* Get the number of modes to eliminate at each call to the DMD class */
 	PetscBool flg;
-	PetscInt iDMD, *ipDMDRanks;
+	PetscInt iDMD, *ipDMDRanks{};
 
 	PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &iDMD, &flg);
 	PetscMalloc1(iDMD, &ipDMDRanks);
@@ -77,6 +77,7 @@ DMD::~DMD() {
 	MatDestroy(&lrSVD.W);
 	MatDestroy(&Atilde);
 	MatDestroy(&Phi);
+	MatDestroy(&time_dynamics_old);
 	MatDestroy(&time_dynamics);
 	VecDestroy(&update);
 
@@ -199,13 +200,31 @@ PetscErrorCode DMD::calcDMDmodes(){
 						&Phi); CHKERRQ(ierr);
 
 		std::vector<PetscReal> omega;
+		ComplexSTLVec omega_new;
 		for (size_t i = 0; i < lrSVD.eigs.size(); i++){
 			PetscReal eig_real = std::real(lrSVD.eigs[i]);
 			PetscReal tmp = log(eig_real);
-			assert(isfinite(tmp) && "Omega has infinite value!!\n\n");
+//			assert(isfinite(tmp) && "Omega has infinite value!!\n\n");
 			omega.push_back(tmp/dt);
-		}
 
+			ComplexNum complexEig = lrSVD.eigs[i];
+			ComplexNum tmp2 = log(complexEig);
+			assert(isfinite(std::real(tmp2)) && "Omega has infinite value!!\n\n");
+			omega_new.push_back(tmp2/dt);
+		}
+		std::ofstream fOMEGA;
+		fOMEGA.open("Omega.dat");
+		for(auto element: omega){
+			fOMEGA << element << std::endl;
+		}
+		fOMEGA.close();
+
+		std::ofstream fOMEGA_new;
+		fOMEGA_new.open("Omega_new.dat");
+		for(auto element: omega_new){
+			fOMEGA_new << element << std::endl;
+		}
+		fOMEGA_new.close();
 
 	Vec rhs, Soln; // rhs = x1, Soln = b
 	KSP ksp;
@@ -252,17 +271,24 @@ PetscErrorCode DMD::calcDMDmodes(){
 		for (int mode = 0; mode < svdRank; mode++) {
 			PetscScalar bVal;
 			ierr = VecGetValues(Soln, 1, &mode, &bVal); CHKERRQ(ierr);
-			PetscScalar value = bVal*exp(omega[mode]*t);
+			PetscScalar value = bVal*exp(omega_new[mode]*t);
 
+			ierr = MatSetValue(time_dynamics_old, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
+
+			PetscScalar value = std::real(bVal*exp(omega_new[mode]*t));
 			ierr = MatSetValue(time_dynamics, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
+
 		}
 		t += dt;
 	}
+	ierr = MatAssemblyBegin(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
+	ierr = MatAssemblyEnd(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 	ierr = MatAssemblyBegin(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 	ierr = MatAssemblyEnd(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 
 #ifdef DEBUG_DMD
-	ierr = printMatPYTHON(DEB_MAT_DIR + "TD", "TD", time_dynamics); CHKERRQ(ierr);
+	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics_old", "TD", time_dynamics_old); CHKERRQ(ierr);
+	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics", "TD", time_dynamics); CHKERRQ(ierr);
 #endif
 
 	ierr = MatDestroy(&X2_Vr); CHKERRQ(ierr);
