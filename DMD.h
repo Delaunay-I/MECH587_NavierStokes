@@ -78,7 +78,7 @@ public:
 	PetscErrorCode prepareData();
 
 	PetscErrorCode regression();
-	PetscErrorCode calcDMDmodes();
+//	PetscErrorCode calcDMDmodes(); // does not include complex numbers - should be fixed!!
 	PetscErrorCode computeUpdate(PetscInt iMode);
 	PetscErrorCode computeMatTransUpdate();
 

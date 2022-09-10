@@ -515,12 +515,11 @@ int main(int argc, char **argv) {
 
 	_snapshots_type snap;
 	Vec vvGlobal;
-
+	PetscReal dResSlope{}, dlastIterfNorm{};
 	/* Implicit time advance of the Navier--Stokes system */
 	for (int iDMD = 0; iDMD < iDMD + 1; iDMD++) {
 		for (; iter <= dmdIter[iDMD]; iter++) {
 
-//		iter++;
 		calc_residual(Soln, FI);
 		calc_fluxJacobians(Soln, Bx, Cx, Ax, By, Cy, Ay);
 
