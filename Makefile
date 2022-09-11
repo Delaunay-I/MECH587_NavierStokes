@@ -10,7 +10,7 @@ INCLUDES = -I/$(SLEPC_DIR)/include -I/${SLEPC_DIR}/${PETSC_ARCH}/include \
 
 LIBS = -L/$(SLEPC_DIR)/lib  \
 -L/usr/lib \
--Wl,-rpath=/$(PETSC_DIR)/${PETSC_ARCH}/lib \
+-Wl,-rpath=/${PETSC_DIR}/${PETSC_ARCH}/lib \
 -Wl,-rpath=${SLEPC_DIR}/${PETSC_ARCH}/lib \
 -L${SLEPC_DIR}/${PETSC_ARCH}/lib  \
 -L${PETSC_DIR}/${PETSC_ARCH}/lib  

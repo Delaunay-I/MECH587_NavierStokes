@@ -1,10 +1,12 @@
 # Directories
 Regress/
 Default/
+Debug/
 
 # Files to ignore
 *.dat
 *.o
+*.code-workspace
 
 # Eclipse related directories
 .project

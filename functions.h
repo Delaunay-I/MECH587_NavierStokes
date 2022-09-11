@@ -4,6 +4,7 @@
 #include <iostream>
 #include <math.h>
 #include <vector>
+#include <deque>
 #include <cassert>
 #include <algorithm>
 
@@ -98,6 +99,8 @@ void write_tecplot_diff(FILE* file, const char* filename, double*** array, doubl
 
 void write_sym_plot_u(FILE* file, const char* filename, double*** array1d, int l);
 
+template <class T , class M>
+void Linear_Regression(std::vector<T> indep_var, std::deque<T> dep_var, M &a_1, M &a_2);
 
 #endif // !FUNCTIONS_H
 

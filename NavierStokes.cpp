@@ -515,7 +515,19 @@ int main(int argc, char **argv) {
 
 	_snapshots_type snap;
 	Vec vvGlobal;
-	PetscReal dResSlope{}, dlastIterfNorm{};
+
+	int iSCP{100}; //Slope Check Period
+	// variables for checking the slope of the residual
+	std::vector<double> LRx; // x values
+	std::deque<double> LRy{}; // y values
+	PetscScalar slope, intercept;
+	PetscScalar slope_old, slope_ratio;
+
+	for (int j = 0; j < iSCP; j++) {
+		LRx.push_back(j);
+	}
+
+
 	/* Implicit time advance of the Navier--Stokes system */
 	for (int iDMD = 0; iDMD < iDMD + 1; iDMD++) {
 		for (; iter <= dmdIter[iDMD]; iter++) {
@@ -524,7 +536,24 @@ int main(int argc, char **argv) {
 		calc_fluxJacobians(Soln, Bx, Cx, Ax, By, Cy, Ay);
 
 		MaxChange = ApproximateFactorization(Soln, FI);
-		fprintf(residual, "%4d %12.5G\n", iter, MaxChange);
+
+		// Handling the residual, data to decide when to apply the relaxation //
+		LRy.push_back(MaxChange);
+		if (iter > iSCP) {
+			LRy.pop_front();
+			Linear_Regression(LRx, LRy, slope, intercept);
+
+			if (iter % (iSCP) == 0) {
+					slope_ratio = slope / slope_old;
+					slope_old = slope;
+				} else
+					slope_ratio = -1;
+
+
+			fprintf(residual, "%4d %12.5G\t %.8G\t %8.5G\n", iter, MaxChange, slope, slope_ratio);
+		} else {
+			fprintf(residual, "%4d %12.5G\t%.i\n", iter, MaxChange, 0);
+		}
 		ierr = PetscPrintf(PETSC_COMM_WORLD, "iter: %i dT: %3f fnorm: %6e\n", iter, dT, MaxChange); CHKERRQ(ierr);
 
 		get_l2norm(solution, iter);
@@ -827,5 +856,32 @@ PetscErrorCode printMatPYTHON(std::string sFilename,
 	return ierr;
 }
 
+template <class T , class M>
+void Linear_Regression(std::vector<T> indep_var, std::deque<T> dep_var, M &a_1, M &a_2)
+{
 
+	int n = indep_var.size();
+	int n_test = dep_var.size();
+	assert(n==n_test && "The size of dependent and independent variables are not equal, so we cannot do regression\n");
+
+	for (auto it = dep_var.begin(); it != dep_var.end(); ++it)
+		*it = log(*it);
+
+	T Sxx{}, Sx{}, S{static_cast<T>(n)};
+	T Sxy{}, Sy{}, Delta{};
+	for (int i=0; i < n; i++){
+		Sxx += indep_var[i] * indep_var[i];
+		Sx += indep_var[i];
+		Sxy += indep_var[i] * dep_var[i];
+		Sy += dep_var[i];
+	}
+
+	Delta = S*Sxx - Sx*Sx;
+
+	a_1 = (S*Sxy - Sx*Sy)/Delta;
+	a_2 = (Sxx*Sy - Sx*Sxy)/Delta;
+
+	a_1 = exp(a_1);
+
+}
 
