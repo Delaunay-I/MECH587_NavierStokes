@@ -45,6 +45,8 @@ private:
 	PetscReal dt;
 	FILE* fLog;
 
+	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
+
 	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
 	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL, time_dynamics_old = PETSC_NULL;
 
@@ -98,10 +100,15 @@ public:
 		return svdRank;
 	}
 	PetscErrorCode solveSVD(SVD& svd, Mat& mMatrix);
-	PetscErrorCode calcLowRankSVDApprox(SVD& svd, PetscInt rank, _svd& LowSVD, std::string sFileName,
-			bool squreMat = false);
-	PetscErrorCode calcBestFitlrSVD(_svd& LowSVD, Mat& mBestFit);
-	PetscErrorCode calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFileName, bool calcEigenvectors=false);
+	PetscErrorCode computeSVDRank(SVD &svd);
+
+	PetscErrorCode calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD,
+			std::string sFileName, bool squreMat = false);
+
+	PetscErrorCode calcBestFitlrSVD(_svd &LowSVD, Mat &mBestFit);
+	PetscErrorCode calcEigenvalues(_svd &LowSVD, Mat &matrix,
+			std::string sFileName, bool calcEigenvectors = false);
+
 	PetscErrorCode lapackMatInv(Mat &A);
 
 

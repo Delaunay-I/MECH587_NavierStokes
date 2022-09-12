@@ -28,23 +28,24 @@ DMD::DMD(const Mat *svdMat, PetscInt iModes, PetscReal DT) :
 	PetscBool flg;
 	PetscInt iDMD, *ipDMDRanks{};
 
-	PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &iDMD, &flg);
-	PetscMalloc1(iDMD, &ipDMDRanks);
+	PetscOptionsHasName(NULL, PETSC_NULL, "-DMD_autoSetMatrix", &flg_autoRankDMD);
 
-	PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_ranks", ipDMDRanks, &iDMD, &flg);
-	if (!flg) {
-		PetscErrorPrintf("Missing -dmd_ranks flag!\n");
-		exit(2);
-	} else if (svdRank > X.num_cols - 1) {
-		PetscErrorPrintf("\nSVD rank is greater than the number of (snapshots columns - 1).\n"
-				"Decrease the SVD rank, or increase the number of snapshots columns.\n");
-		exit(2);
+	if (!flg_autoRankDMD){
+		PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &iDMD, &flg);
+		PetscMalloc1(iDMD, &ipDMDRanks);
+		PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_ranks", ipDMDRanks, &iDMD, &flg);
+		if (!flg) {
+			PetscErrorPrintf("Missing -dmd_ranks flag!\n");
+			exit(2);
+		} else if (svdRank > X.num_cols - 1) {
+			PetscErrorPrintf(
+					"\nSVD rank is greater than the number of (snapshots columns - 1).\n"
+							"Decrease the SVD rank, or increase the number of snapshots columns.\n");
+			exit(2);
+		}
+		svdRank = ipDMDRanks[isDMD_execs];
 	}
-	svdRank = ipDMDRanks[isDMD_execs];
-	printf("\nDMD was called %i times, current SVD approximation rank: %i\n", isDMD_execs + 1, svdRank);
 
-	/* Writing information to our log file */
-	fprintf(fLog, "SVDRank: %i\t num Snapshots: %i-1\n", svdRank, X.num_cols);
 
 	/* creating a few directories */
 	if (!IsPathExist(DEB_MAT_DIR)) {
@@ -65,6 +66,9 @@ DMD::DMD(const Mat *svdMat, PetscInt iModes, PetscReal DT) :
 
 
 DMD::~DMD() {
+	/* Writing information to our log file */
+	fprintf(fLog, "SVDRank: %i\t num Snapshots: %i-1\n", svdRank, X.num_cols);
+
 	fprintf(fLog, "\n");
 	fclose(fLog);
 	PetscFree(row_index);
@@ -164,13 +168,22 @@ PetscErrorCode DMD::regression() {
 
 	ierr = solveSVD(svd, X1); CHKERRQ(ierr);
 
+	// Compute the proper rank if requested
+	if (flg_autoRankDMD) {
+		ierr = computeSVDRank(svd); CHKERRQ(ierr);
+	}
+
+	printf("\nDMD was called %i times, current SVD approximation rank: %i\n",
+			isDMD_execs + 1, svdRank);
+
 	/*
 	 * Getting Singular values and singular vectors
 	 * and building low rank truncation matrices
 	 */
 	ierr = PetscPrintf(PETSC_COMM_WORLD,
 					"computing the %i-rank-SVD-approximation of the snapshots matrix.\n", svdRank); CHKERRQ(ierr);
-	ierr = calcLowRankSVDApprox(svd, svdRank, lrSVD, "SnapshotsMat-LowRank"); CHKERRQ(ierr);
+		ierr = calcLowRankSVDApprox(svd, svdRank, lrSVD, "SnapshotsMat-LowRank");
+		CHKERRQ(ierr);
 
 #ifdef DMD_CHECK_EIGS
 	Mat fullAtilde;
@@ -458,6 +471,32 @@ PetscErrorCode DMD::solveSVD(SVD& svd, Mat& mMatrix){
 	return ierr;
 }
 
+/*
+ * Compute the proper rank for the matrix trasformation update - Automatically
+ */
+PetscErrorCode DMD::computeSVDRank(SVD &svd) {
+	PetscErrorCode ierr;
+	PetscInt nconv, iRankCount{};
+	PetscReal sigma;
+	std::vector<PetscReal> sigmaVec{};
+
+	ierr = SVDGetConverged(svd, &nconv); CHKERRQ(ierr);
+
+	for (int j = 0; j < nconv; j++) {
+		PetscInt index = j;
+		ierr = SVDGetSingularTriplet(svd, j, &sigma, NULL, NULL); CHKERRQ(ierr);
+		sigmaVec.push_back(sigma);
+
+		if (sigma > 1e-15)
+			iRankCount++;
+	}
+
+	svdRank = iRankCount;
+
+	return ierr;
+}
+
+
 /* Extracts singularvalues and singular vectors of a given matrix */
 PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, std::string sFileName,
 		bool squreMat) {
@@ -706,7 +745,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 
 	ierr = PetscPrintf(PETSC_COMM_WORLD, "\nExtracting %s...\n", sFileName.c_str()); CHKERRQ(ierr);
 
-	std::fprintf(fEigs, "VARIABLES = \"NUM\" \"Real\" \"Imag\" \"Rel. Error\" \"LogValue\"\n");
+	std::fprintf(fEigs, "VARIABLES = \"NUM\" \"Real\" \"Imag\" \"Rel. Error\"\n");
 
 	for (PetscInt i = 0; i < nconv; i++) {
 
@@ -723,7 +762,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 #ifdef PRINT_EIGENVALUES
 		printf("eigen %i: %f %fi\n", i + 1, std::real(LowSVD.eigs[i]), std::imag(LowSVD.eigs[i]));
 #endif
-		std::fprintf(fEigs, "%.2i\t%.12g\t%12g\t%.12g\t%.12g\n", i + 1, dReal, dImag, dError, log(dReal));
+		std::fprintf(fEigs, "%.2i\t%.12g\t%12g\t%.12g\n", i + 1, dReal, dImag, dError);
 
 #ifdef COMPLEX_NUMBER_PROBLEM
 		if (calcEigenvectors) {
