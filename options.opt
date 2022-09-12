@@ -1,12 +1,13 @@
 #---------------------------- DMD
 -DMD                # compute DMD
--dmd_ranks 7,7         # Truncation of SVD
+-dmd_ranks 15,7         # Truncation of SVD
 -num_dmdModes 3     # Number of modes to eliminate at each DMD
 
+-DMD_auto_config    # Automate DMD configurations: iteration to apply
 -DMD_nits  2          # Number of DMD applied
--DMD_its  600,1000     # iterations to apply the DMD update
+#-DMD_its  600,1000     # iterations to apply the DMD update
 
--svd_ncv  10        # number of columns of the svd matrix
+-svd_ncv  25        # number of columns of the svd matrix
 
 -max_iter_total 3000
 -dt 0.05
