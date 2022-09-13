@@ -20,8 +20,14 @@ struct _snapshots_type{
 	};
 
 
+/* Time Advance option */
+PetscErrorCode TimeAdvance(PetscInt& numIters, PetscInt*& dmdIter, PetscBool& flg_DMD);
+PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBool &flg_DMD);
+
 /* DMD added Functions */
-PetscErrorCode readOpts(PetscReal& dT, PetscInt& max_iter_total, PetscBool flg_DMD, PetscInt& nDMD, PetscInt* dmdIter);
+PetscErrorCode readOpts(PetscReal &dT, PetscInt &max_iter_total,
+		PetscBool &flg_DMD, PetscBool &flg_dmdAuto, PetscInt &nDMD,
+		PetscInt *&dmdIter);
 PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap);
 PetscErrorCode updateSolutionMatrix(Vec& vec, _snapshots_type& snap);
 
@@ -184,7 +190,6 @@ void calc_residual(double*** Soln, double*** FI) {
 /* -----------calculating      Ax, Bx, Cx ------and----- Ay, By, Cy   ---------- */
 void calc_fluxJacobians(double*** Soln, double**** Bx, double**** Cx, double**** Ax,
 	double**** By, double**** Cy, double**** Ay) {
-	PetscErrorCode ierr;
 	/*double FFJ1[IMAX + 2][JMAX + 2][3][3]{}, FFJ2[IMAX + 2][JMAX + 2][3][3]{};
 	double GFJ1[IMAX + 2][JMAX + 2][3][3]{}, GFJ2[IMAX + 2][JMAX + 2][3][3]{};*/
 
@@ -448,7 +453,6 @@ int main(int argc, char **argv) {
 	PetscErrorCode ierr;
 	PetscMPIInt size;
 	FILE* out{};
-	FILE* residual, * solution;
 	PetscBool flg;
 
 	ierr = SlepcInitialize(&argc, &argv, (char*) 0, (char*) 0); CHKERRQ(ierr);
@@ -460,165 +464,210 @@ int main(int argc, char **argv) {
 	PetscInt numIters, iDMD, *dmdIter;
 	PetscBool flg_DMD, flg_dmdAuto;
 
-//	ierr = readOpts(dT, numIters, flg_DMD, iDMD, dmdIter); CHKERRQ(ierr);
+	ierr = readOpts(dT, numIters, flg_DMD, flg_dmdAuto, iDMD, dmdIter); CHKERRQ(ierr);
 
-	ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &dT, &flg);CHKERRQ(ierr);
-	if (!flg) {
-		ierr = PetscErrorPrintf("Missing -dt option!\n");	CHKERRQ(ierr);
-	}
-
-	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-max_iter_total", &numIters, &flg);CHKERRQ(ierr);
-	if (!flg) {
-		PetscErrorPrintf("Missing -max_iter_total flag!\n");
-//			exit(1);
-	}
-
-	ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);	CHKERRQ(ierr);
-	ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD_auto_config", &flg_dmdAuto);	CHKERRQ(ierr);
-	if (flg_dmdAuto) {
-		ierr = PetscPrintf(PETSC_COMM_WORLD, "Auto configure DMD.\n"); CHKERRQ(ierr);
-	}else {
-		ierr = PetscPrintf(PETSC_COMM_WORLD, "Manually configuring DMD.\nConfig should be provided\n"); CHKERRQ(ierr);
-	}
-
-	if (flg_DMD && !flg_dmdAuto) {
-		ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &iDMD, NULL); CHKERRQ(ierr);
-		ierr = PetscMalloc1(iDMD + 1, &dmdIter); CHKERRQ(ierr);
-		dmdIter[iDMD] = numIters;
-
-		ierr = PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_its", dmdIter, &iDMD, &flg); CHKERRQ(ierr);
-		if (flg) {
-			if (iDMD < 1) {
-				PetscErrorPrintf("Incorrect argument for -DMD_its\n");
-				exit(1);
-			}
-		}
-		std::sort(dmdIter, dmdIter + iDMD + 1);
-	} else {
-		iDMD = 0;
-		ierr = PetscMalloc1(iDMD + 1, &dmdIter);
-		CHKERRQ(ierr);
-		dmdIter[iDMD] = numIters;
-	}
+//	ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &dT, &flg);CHKERRQ(ierr);
+//	if (!flg) {
+//		ierr = PetscErrorPrintf("Missing -dt option!\n");	CHKERRQ(ierr);
+//	}
+//
+//	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-max_iter_total", &numIters, &flg);CHKERRQ(ierr);
+//	if (!flg) {
+//		PetscErrorPrintf("Missing -max_iter_total flag!\n");
+////			exit(1);
+//	}
+//
+//	ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);	CHKERRQ(ierr);
+//	ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD_auto_config", &flg_dmdAuto);	CHKERRQ(ierr);
+//	if (flg_dmdAuto) {
+//		ierr = PetscPrintf(PETSC_COMM_WORLD, "Auto configure DMD.\n"); CHKERRQ(ierr);
+//	}else {
+//		ierr = PetscPrintf(PETSC_COMM_WORLD, "Manually configuring DMD.\nConfig should be provided\n"); CHKERRQ(ierr);
+//	}
+//
+//	if (flg_DMD && !flg_dmdAuto) {
+//		ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &iDMD, NULL); CHKERRQ(ierr);
+//		ierr = PetscMalloc1(iDMD + 1, &dmdIter); CHKERRQ(ierr);
+//		dmdIter[iDMD] = numIters;
+//
+//		ierr = PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_its", dmdIter, &iDMD, &flg); CHKERRQ(ierr);
+//		if (flg) {
+//			if (iDMD < 1) {
+//				PetscErrorPrintf("Incorrect argument for -DMD_its\n");
+//				exit(1);
+//			}
+//		}
+//		std::sort(dmdIter, dmdIter + iDMD + 1);
+//	} else {
+//		iDMD = 0;
+//		ierr = PetscMalloc1(iDMD + 1, &dmdIter);
+//		CHKERRQ(ierr);
+//		dmdIter[iDMD] = numIters;
+//	}
 
 	memory_allocation();
 
 	/* initializing P, u, and v with the initial conditions */
 	initialize(Soln, dSoln);
-	
-	Mat mJac;
-	ierr = MatCreate(PETSC_COMM_WORLD, &mJac); CHKERRQ(ierr);
-	ierr = MatSetSizes(mJac, PETSC_DECIDE, PETSC_DECIDE, 9, 9); CHKERRQ(ierr);
-	ierr = MatSetType(mJac, MATAIJ); CHKERRQ(ierr);
-	ierr = MatSetUp(mJac); CHKERRQ(ierr);
 
-	double MaxChange{};
-	int iter{1};
+	/* ------------ Manually configure DMD ----------------- */
+	if (!flg_dmdAuto) {
+	/* Implicit time advance of the Navier--Stokes system */
+		ierr = TimeAdvance(numIters, dmdIter, flg_DMD);	CHKERRQ(ierr);
+	} // Automatically set DMD
+	else {
+		ierr = TimeAdvanceSmart(numIters, dmdIter, flg_DMD); CHKERRQ(ierr);
+	}
+
+	write_tecplot(out, "Field_data.dat", Soln);
+	write_sym_plot_u(out, "symmetry_u.dat", Soln, JMAX + 2);
+
+	if (flg_DMD && !flg_dmdAuto) {
+		ierr = PetscFree(dmdIter); CHKERRQ(ierr);
+	}
+	memory_deallocate();
+	ierr = SlepcFinalize(); CHKERRQ(ierr);
+
+	return 0;
+}
+
+PetscErrorCode TimeAdvance(PetscInt& numIters, PetscInt*& dmdIter, PetscBool& flg_DMD) {
+	PetscErrorCode ierr;
+	PetscBool flg;
+	int iter { 1 };
+	double MaxChange { };
+
+	FILE *residual, *solution;
 	residual = fopen("Residuals.dat", "w");
 	solution = fopen("solution.dat", "w");
 	fprintf(solution, "%4s %14s %14s %14s\n", "iter", "dP", "dU", "dV");
 
+	_snapshots_type snap;
+	Vec vvGlobal;
+
+	for (int iDMD = 0; iDMD < iDMD + 1; iDMD++) {
+		for (; iter <= dmdIter[iDMD]; iter++) {
+
+			calc_residual(Soln, FI);
+			calc_fluxJacobians(Soln, Bx, Cx, Ax, By, Cy, Ay);
+
+			MaxChange = ApproximateFactorization(Soln, FI);
+
+			fprintf(residual, "%4d %12.5G\t%.i\n", iter, MaxChange, 0);
+
+			ierr = PetscPrintf(PETSC_COMM_WORLD,
+					"iter: %i dT: %3f fnorm: %6e\n", iter, dT, MaxChange);
+			CHKERRQ(ierr);
+
+			get_l2norm(solution, iter);
+
+			ApplyBC(Soln);
+
+			ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX * JMAX * 3, &vvGlobal);
+			CHKERRQ(ierr);
+			/* --------Not including the BCs-------- */
+			for (int i = 1, index = 0; i <= IMAX; i++)
+				for (int j = 1; j <= JMAX; j++)
+					for (int k = 0; k < 3; k++, index++) {
+						PetscScalar value = FI[i][j][k];
+						ierr = VecSetValue(vvGlobal, index, value,
+								INSERT_VALUES);
+						CHKERRQ(ierr);
+					}
+
+			if (iter == 1 && flg_DMD) {
+				ierr = initSnapsMat(vvGlobal, snap);
+				CHKERRQ(ierr);
+			} else if (flg_DMD) {
+				ierr = updateSolutionMatrix(vvGlobal, snap);
+				CHKERRQ(ierr);
+			}
+			if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
+				ierr = printVecMATLAB("FI", "FI", vvGlobal);
+				CHKERRQ(ierr);
+			}
+
+			if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
+
+				FILE *fLOG;
+				fLOG = fopen("Log.dat", "a");
+				fprintf(fLOG, "iter: %i\t", iter);
+				fclose(fLOG);
+
+				PetscInt inumDMDModes;
+				ierr = PetscOptionsGetInt(NULL, NULL, "-num_dmdModes",
+						&inumDMDModes, &flg);
+				CHKERRQ(ierr);
+				if (!flg) {
+					PetscErrorPrintf(
+							"Did you set the number of modes to eliminate?\n"
+									" Setting it to 1: for regress model only.\n\n");
+					inumDMDModes = 1;
+				}
+
+				PetscReal dTimeStep = dT;
+				DMD a_dmd(&snap.mat, inumDMDModes, dTimeStep);
+
+				ierr = a_dmd.applyDMDMatTrans();
+				CHKERRQ(ierr);
+
+				Vec vUpdate { };
+				vUpdate = a_dmd.vgetUpdate();
+				ierr = printVecMATLAB("update", "vUpdate", vUpdate);
+				CHKERRQ(ierr);
+
+				for (int i = 1, index = 0; i <= IMAX; i++)
+					for (int j = 1; j <= JMAX; j++)
+						for (int k = 0; k < 3; k++, index++) {
+							PetscScalar value { };
+							ierr = VecGetValues(vUpdate, 1, &index, &value);
+							CHKERRQ(ierr);
+							FI[i][j][k] = value;
+							Soln[i][j][k] += value;
+						}
+			}
+
+			if (MaxChange < 1.e-10 || iter == numIters) {
+				ierr = PetscPrintf(PETSC_COMM_WORLD,
+						"Converged to satisfactory point!!\n");
+				CHKERRQ(ierr);
+				goto outNest;
+			}
+		}
+	}
+	outNest:
+	fclose(residual);
+	fclose(solution);
+	return ierr;
+}
+
+PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBool &flg_DMD) {
+	PetscErrorCode ierr;
+	PetscBool flg;
+	int iter { 1 };
+	double MaxChange { };
+
+	FILE *residual, *solution;
+	residual = fopen("Residuals.dat", "w");
+	solution = fopen("solution.dat", "w");
+	fprintf(solution, "%4s %14s %14s %14s\n", "iter", "dP", "dU", "dV");
 
 	_snapshots_type snap;
 	Vec vvGlobal;
 
-	/* ------------ Manually configure DMD ----------------- */
-	if (flg_DMD && !flg_dmdAuto) {
-	/* Implicit time advance of the Navier--Stokes system */
-	for (int iDMD = 0; iDMD < iDMD + 1; iDMD++) {
-		for (; iter <= dmdIter[iDMD]; iter++) {
+	int iSCP { 100 }; //Slope Check Period
+	// variables for checking the slope of the residual
+	std::vector<double> LRx; // x values
+	std::deque<double> LRy { }; // y values
+	PetscScalar slope, intercept;
+	PetscScalar slope_old, slope_ratio;
 
-		calc_residual(Soln, FI);
-		calc_fluxJacobians(Soln, Bx, Cx, Ax, By, Cy, Ay);
-
-		MaxChange = ApproximateFactorization(Soln, FI);
-
-		fprintf(residual, "%4d %12.5G\t%.i\n", iter, MaxChange, 0);
-
-		ierr = PetscPrintf(PETSC_COMM_WORLD, "iter: %i dT: %3f fnorm: %6e\n", iter, dT, MaxChange); CHKERRQ(ierr);
-
-		get_l2norm(solution, iter);
-
-		ApplyBC(Soln);
-
-		ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX*JMAX*3, &vvGlobal); CHKERRQ(ierr);
-		/* --------Not including the BCs-------- */
-		for (int i = 1, index = 0; i <= IMAX; i++)
-			for (int j = 1; j <= JMAX; j++)
-				for (int k = 0; k < 3; k++, index++) {
-					PetscScalar value = FI[i][j][k];
-					ierr = VecSetValue(vvGlobal, index, value, INSERT_VALUES); CHKERRQ(ierr);
-				}
-
-		if (iter == 1 && flg_DMD){
-			ierr = initSnapsMat(vvGlobal, snap); CHKERRQ(ierr);
-		} else if (flg_DMD) {
-			ierr = updateSolutionMatrix(vvGlobal, snap); CHKERRQ(ierr);
-		}
-		if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
-					ierr = printVecMATLAB("FI", "FI", vvGlobal); CHKERRQ(ierr);
-				}
-
-		if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
-
-			FILE* fLOG;
-			fLOG = fopen("Log.dat", "a");
-			fprintf(fLOG, "iter: %i\t", iter);
-			fclose(fLOG);
-
-			PetscInt inumDMDModes;
-			ierr = PetscOptionsGetInt(NULL, NULL, "-num_dmdModes", &inumDMDModes, &flg); CHKERRQ(ierr);
-			if (!flg) {
-				PetscErrorPrintf("Did you set the number of modes to eliminate?\n"
-						" Setting it to 1: for regress model only.\n\n");
-				inumDMDModes = 1;
-			}
-
-			PetscReal dTimeStep = dT;
-			DMD a_dmd(&snap.mat, inumDMDModes, dTimeStep);
-
-			ierr = a_dmd.applyDMDMatTrans(); CHKERRQ(ierr);
-
-			const Mat mDMDModes = a_dmd.mGetDMDModes();
-			Vec vUpdate{};
-			vUpdate = a_dmd.vgetUpdate();
-			ierr = printVecMATLAB("update", "vUpdate", vUpdate); CHKERRQ(ierr);
-
-			for (int i = 1, index = 0; i <= IMAX; i++)
-				for (int j = 1; j <= JMAX; j++)
-					for (int k = 0; k < 3; k++, index++) {
-						PetscScalar value{};
-						ierr = VecGetValues(vUpdate, 1, &index, &value); CHKERRQ(ierr);
-						FI[i][j][k] = value;
-						Soln[i][j][k] += value;
-					}
-		}
-
-
-
-		if (MaxChange < 1.e-10 || iter == numIters) {
-			ierr = PetscPrintf(PETSC_COMM_WORLD, "Converged to satisfactory point!!\n"); CHKERRQ(ierr);
-			goto outNest;
-			}
-		}
-	}
+	for (int j = 0; j < iSCP; j++) {
+		LRx.push_back(j);
 	}
 
-	if (flg_DMD && flg_dmdAuto) {
-
-		int iSCP { 100 }; //Slope Check Period
-		// variables for checking the slope of the residual
-		std::vector<double> LRx; // x values
-		std::deque<double> LRy { }; // y values
-		PetscScalar slope, intercept;
-		PetscScalar slope_old, slope_ratio;
-
-		for (int j = 0; j < iSCP; j++) {
-			LRx.push_back(j);
-		}
-
 	/* Implicit time advance of the Navier--Stokes system */
-		for (; iter <= numIters; iter++) {
+	for (; iter <= numIters; iter++) {
 
 		calc_residual(Soln, FI);
 		calc_fluxJacobians(Soln, Bx, Cx, Ax, By, Cy, Ay);
@@ -632,98 +681,96 @@ int main(int argc, char **argv) {
 			Linear_Regression(LRx, LRy, slope, intercept);
 
 			if (iter % (iSCP) == 0) {
-					slope_ratio = slope / slope_old;
-					slope_old = slope;
-				} else
-					slope_ratio = -1;
-			fprintf(residual, "%4d %12.5G\t %.8G\t %8.5G\n", iter, MaxChange, slope, slope_ratio);
+				slope_ratio = slope / slope_old;
+				slope_old = slope;
+			} else
+				slope_ratio = -1;
+			fprintf(residual, "%4d %12.5G\t %.8G\t %8.5G\n", iter, MaxChange,
+					slope, slope_ratio);
 		} else {
 			fprintf(residual, "%4d %12.5G\t%.i\n", iter, MaxChange, 0);
 		}
-		ierr = PetscPrintf(PETSC_COMM_WORLD, "iter: %i dT: %3f fnorm: %6e\n", iter, dT, MaxChange); CHKERRQ(ierr);
+		ierr = PetscPrintf(PETSC_COMM_WORLD, "iter: %i dT: %3f fnorm: %6e\n",
+				iter, dT, MaxChange);
+		CHKERRQ(ierr);
 
 		get_l2norm(solution, iter);
 		ApplyBC(Soln);
 
-		ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX*JMAX*3, &vvGlobal); CHKERRQ(ierr);
+		ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX * JMAX * 3, &vvGlobal);
+		CHKERRQ(ierr);
 		/* --------Not including the BCs-------- */
 		for (int i = 1, index = 0; i <= IMAX; i++)
 			for (int j = 1; j <= JMAX; j++)
 				for (int k = 0; k < 3; k++, index++) {
 					PetscScalar value = FI[i][j][k];
-					ierr = VecSetValue(vvGlobal, index, value, INSERT_VALUES); CHKERRQ(ierr);
+					ierr = VecSetValue(vvGlobal, index, value, INSERT_VALUES);
+					CHKERRQ(ierr);
 				}
 
 		// Initializing the snapshot matrix in iter = 1, and updating it in other iterations
-		if (iter == 1 && flg_DMD){
-			ierr = initSnapsMat(vvGlobal, snap); CHKERRQ(ierr);
+		if (iter == 1 && flg_DMD) {
+			ierr = initSnapsMat(vvGlobal, snap);
+			CHKERRQ(ierr);
 		} else if (flg_DMD) {
-			ierr = updateSolutionMatrix(vvGlobal, snap); CHKERRQ(ierr);
+			ierr = updateSolutionMatrix(vvGlobal, snap);
+			CHKERRQ(ierr);
 		}
-
 
 		if (abs(slope_ratio - 1) <= 0.0011 && flg_DMD) {
 
-			FILE* fLOG;
+			FILE *fLOG;
 			fLOG = fopen("Log.dat", "a");
 			fprintf(fLOG, "iter: %i\t", iter);
 			fclose(fLOG);
 
 			PetscInt inumDMDModes;
-			ierr = PetscOptionsGetInt(NULL, NULL, "-num_dmdModes", &inumDMDModes, &flg); CHKERRQ(ierr);
+			ierr = PetscOptionsGetInt(NULL, NULL, "-num_dmdModes",
+					&inumDMDModes, &flg);
+			CHKERRQ(ierr);
 			if (!flg) {
-				PetscErrorPrintf("Did you set the number of modes to eliminate?\n"
-						" Setting it to 1: for regress model only.\n\n");
+				PetscErrorPrintf(
+						"Did you set the number of modes to eliminate?\n"
+								" Setting it to 1: for regress model only.\n\n");
 				inumDMDModes = 1;
 			}
 
 			PetscReal dTimeStep = dT;
 			DMD a_dmd(&snap.mat, inumDMDModes, dTimeStep);
 
-			ierr = a_dmd.applyDMDMatTrans(); CHKERRQ(ierr);
+			ierr = a_dmd.applyDMDMatTrans();
+			CHKERRQ(ierr);
 
-			const Mat mDMDModes = a_dmd.mGetDMDModes();
-			Vec vUpdate{};
+			Vec vUpdate { };
 			vUpdate = a_dmd.vgetUpdate();
-			ierr = printVecMATLAB("update", "vUpdate", vUpdate); CHKERRQ(ierr);
+			ierr = printVecMATLAB("update", "vUpdate", vUpdate);
+			CHKERRQ(ierr);
 
 			for (int i = 1, index = 0; i <= IMAX; i++)
 				for (int j = 1; j <= JMAX; j++)
 					for (int k = 0; k < 3; k++, index++) {
-						PetscScalar value{};
-						ierr = VecGetValues(vUpdate, 1, &index, &value); CHKERRQ(ierr);
+						PetscScalar value { };
+						ierr = VecGetValues(vUpdate, 1, &index, &value);
+						CHKERRQ(ierr);
 						FI[i][j][k] = value;
 						Soln[i][j][k] += value;
 					}
 		}
 
 		if (MaxChange < 1.e-10 || iter == numIters) {
-			ierr = PetscPrintf(PETSC_COMM_WORLD, "Converged to satisfactory point!!\n"); CHKERRQ(ierr);
+			ierr = PetscPrintf(PETSC_COMM_WORLD,
+					"Converged to satisfactory point!!\n");
+			CHKERRQ(ierr);
 			goto outNest;
-			}
 		}
 	}
-
-outNest:
-
-
+	outNest:
 	fclose(residual);
 	fclose(solution);
-
-
-	write_tecplot(out, "Field_data.dat", Soln);
-
-	write_sym_plot_u(out, "symmetry_u.dat", Soln, JMAX + 2);
-
-	if (flg_DMD && !flg_dmdAuto) {
-		ierr = PetscFree(dmdIter); CHKERRQ(ierr);
-	}
-	ierr = MatDestroy(&mJac); CHKERRQ(ierr);
-	memory_deallocate();
-	ierr = SlepcFinalize(); CHKERRQ(ierr);
-
-	return 0;
+	return ierr;
 }
+
+
 
 /* calculating norm */
 void get_l2norm(FILE* solution, int iter) {
@@ -755,7 +802,9 @@ void get_l2norm(FILE* solution, int iter) {
 		iter, l2norm._1, l2norm._2, l2norm._3);
 }
 
-PetscErrorCode readOpts(PetscReal& dT, PetscInt& max_iter_total, PetscBool flg_DMD, PetscInt& nDMD, PetscInt* dmdIter) {
+PetscErrorCode readOpts(PetscReal &dT, PetscInt &max_iter_total,
+		PetscBool &flg_DMD, PetscBool &flg_dmdAuto, PetscInt &nDMD,
+		PetscInt *&dmdIter) {
 	PetscErrorCode ierr;
 	PetscBool flg;
 
@@ -772,8 +821,13 @@ PetscErrorCode readOpts(PetscReal& dT, PetscInt& max_iter_total, PetscBool flg_D
 		}
 
 		ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);CHKERRQ(ierr);
-
-		if (flg_DMD) {
+		ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD_auto_config", &flg_dmdAuto);	CHKERRQ(ierr);
+		if (flg_dmdAuto) {
+			ierr = PetscPrintf(PETSC_COMM_WORLD, "Auto configure DMD.\n"); CHKERRQ(ierr);
+		}else {
+			ierr = PetscPrintf(PETSC_COMM_WORLD, "Manually configuring DMD.\nConfig should be provided\n"); CHKERRQ(ierr);
+		}
+		if (flg_DMD && !flg_dmdAuto) {
 			ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &nDMD, NULL); CHKERRQ(ierr);
 			ierr = PetscMalloc1(nDMD + 1, &dmdIter); CHKERRQ(ierr);
 			dmdIter[nDMD] = max_iter_total;
