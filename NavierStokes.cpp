@@ -21,7 +21,7 @@ struct _snapshots_type{
 
 
 /* Time Advance option */
-PetscErrorCode TimeAdvance(PetscInt& numIters, PetscInt*& dmdIter, PetscBool& flg_DMD);
+PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt& numIters, PetscInt*& dmdIter, PetscBool& flg_DMD);
 PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBool &flg_DMD);
 
 /* DMD added Functions */
@@ -461,49 +461,10 @@ int main(int argc, char **argv) {
 
 	ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
 
-	PetscInt numIters, iDMD, *dmdIter;
+	PetscInt numIters, nDMD, *dmdIter;
 	PetscBool flg_DMD, flg_dmdAuto;
 
-	ierr = readOpts(dT, numIters, flg_DMD, flg_dmdAuto, iDMD, dmdIter); CHKERRQ(ierr);
-
-//	ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &dT, &flg);CHKERRQ(ierr);
-//	if (!flg) {
-//		ierr = PetscErrorPrintf("Missing -dt option!\n");	CHKERRQ(ierr);
-//	}
-//
-//	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-max_iter_total", &numIters, &flg);CHKERRQ(ierr);
-//	if (!flg) {
-//		PetscErrorPrintf("Missing -max_iter_total flag!\n");
-////			exit(1);
-//	}
-//
-//	ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);	CHKERRQ(ierr);
-//	ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD_auto_config", &flg_dmdAuto);	CHKERRQ(ierr);
-//	if (flg_dmdAuto) {
-//		ierr = PetscPrintf(PETSC_COMM_WORLD, "Auto configure DMD.\n"); CHKERRQ(ierr);
-//	}else {
-//		ierr = PetscPrintf(PETSC_COMM_WORLD, "Manually configuring DMD.\nConfig should be provided\n"); CHKERRQ(ierr);
-//	}
-//
-//	if (flg_DMD && !flg_dmdAuto) {
-//		ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &iDMD, NULL); CHKERRQ(ierr);
-//		ierr = PetscMalloc1(iDMD + 1, &dmdIter); CHKERRQ(ierr);
-//		dmdIter[iDMD] = numIters;
-//
-//		ierr = PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_its", dmdIter, &iDMD, &flg); CHKERRQ(ierr);
-//		if (flg) {
-//			if (iDMD < 1) {
-//				PetscErrorPrintf("Incorrect argument for -DMD_its\n");
-//				exit(1);
-//			}
-//		}
-//		std::sort(dmdIter, dmdIter + iDMD + 1);
-//	} else {
-//		iDMD = 0;
-//		ierr = PetscMalloc1(iDMD + 1, &dmdIter);
-//		CHKERRQ(ierr);
-//		dmdIter[iDMD] = numIters;
-//	}
+	ierr = readOpts(dT, numIters, flg_DMD, flg_dmdAuto, nDMD, dmdIter); CHKERRQ(ierr);
 
 	memory_allocation();
 
@@ -513,7 +474,7 @@ int main(int argc, char **argv) {
 	/* ------------ Manually configure DMD ----------------- */
 	if (!flg_dmdAuto) {
 	/* Implicit time advance of the Navier--Stokes system */
-		ierr = TimeAdvance(numIters, dmdIter, flg_DMD);	CHKERRQ(ierr);
+		ierr = TimeAdvance(nDMD, numIters, dmdIter, flg_DMD);	CHKERRQ(ierr);
 	} // Automatically set DMD
 	else {
 		ierr = TimeAdvanceSmart(numIters, dmdIter, flg_DMD); CHKERRQ(ierr);
@@ -531,7 +492,8 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-PetscErrorCode TimeAdvance(PetscInt& numIters, PetscInt*& dmdIter, PetscBool& flg_DMD) {
+PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
+		PetscInt *&dmdIter, PetscBool &flg_DMD) {
 	PetscErrorCode ierr;
 	PetscBool flg;
 	int iter { 1 };
@@ -545,7 +507,7 @@ PetscErrorCode TimeAdvance(PetscInt& numIters, PetscInt*& dmdIter, PetscBool& fl
 	_snapshots_type snap;
 	Vec vvGlobal;
 
-	for (int iDMD = 0; iDMD < iDMD + 1; iDMD++) {
+	for (int iDMD = 0; iDMD < nDMD + 1; iDMD++) {
 		for (; iter <= dmdIter[iDMD]; iter++) {
 
 			calc_residual(Soln, FI);
