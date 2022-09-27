@@ -29,10 +29,13 @@
 
 #define DEBUG_DMD
 //#define DEBUG_DMD_EPS
-#define PRINT_EIGENVALUES
+//#define PRINT_EIGENVALUES
 #define DMD_CHECK_EIGS
-#define DMD_SIGMARATIO
-#define CALC_CONDITION_NUMBER_OF_UPDATE
+//#define DMD_SIGMARATIO
+//#define CALC_CONDITION_NUMBER_OF_UPDATE
+//#define COMPLEX_NUMBER_PROBLEM
+
+# define M_PIl          3.141592653589793238462643383279502884L /* pi */
 
 using ComplexNum = std::complex<double>;
 using ComplexSTLVec = std::vector<ComplexNum>;
@@ -43,6 +46,7 @@ private:
 	PetscInt svdRank{}; //number of columns in SVD modes, also the truncation of SVD
 	PetscInt iNumModes{};
 	PetscReal dt;
+	PetscInt iOsclPeriod; // Oscillation period of the dominant Mode
 	FILE* fLog;
 
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
@@ -79,13 +83,14 @@ public:
 	virtual ~DMD();
 	PetscErrorCode prepareData();
 
-	PetscErrorCode regression();
+	PetscErrorCode regression(bool dummyDMD = false);
 //	PetscErrorCode calcDMDmodes(); // does not include complex numbers - should be fixed!!
 	PetscErrorCode computeUpdate(PetscInt iMode);
 	PetscErrorCode computeMatTransUpdate();
 
 	PetscErrorCode applyDMD();
 	PetscErrorCode applyDMDMatTrans();
+	PetscErrorCode DummyDMD();
 
 
 	Vec vgetUpdate() {
@@ -96,18 +101,23 @@ public:
 		return Phi;
 	}
 
-	int iGetSVDRank() const {
+	PetscInt iGetSVDRank() const {
 		return svdRank;
 	}
+
+	PetscInt iGetDominantPeriod() const {
+		return iOsclPeriod;
+	}
+
+
 	PetscErrorCode solveSVD(SVD& svd, Mat& mMatrix);
 	PetscErrorCode computeSVDRank(SVD &svd);
-
 	PetscErrorCode calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD,
 			std::string sFileName, bool squreMat = false);
-
 	PetscErrorCode calcBestFitlrSVD(_svd &LowSVD, Mat &mBestFit);
 	PetscErrorCode calcEigenvalues(_svd &LowSVD, Mat &matrix,
 			std::string sFileName, bool calcEigenvectors = false);
+	PetscErrorCode calcDominantModePeriod(Mat& matrix);
 
 	PetscErrorCode lapackMatInv(Mat &A);
 

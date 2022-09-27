@@ -162,7 +162,7 @@ PetscErrorCode DMD::prepareData(){
 	return ierr;
 }
 
-PetscErrorCode DMD::regression() {
+PetscErrorCode DMD::regression(bool dummyDMD) {
 	PetscErrorCode ierr;
 	SVD svd;
 
@@ -186,21 +186,29 @@ PetscErrorCode DMD::regression() {
 		CHKERRQ(ierr);
 
 #ifdef DMD_CHECK_EIGS
-	Mat fullAtilde;
-	ierr = calcLowRankSVDApprox(svd, X.num_cols - 1, fullSVD, "SnapshotsMat-Full"); CHKERRQ(ierr);
-	/* Finds the FULL Atilde using all the columns (all the modes) */
-	ierr = calcBestFitlrSVD(fullSVD, fullAtilde); CHKERRQ(ierr);
-	/* Calculates the eigenvalues of the FULL Atilde */
-	ierr = calcEigenvalues(fullSVD, fullAtilde, "fullAtilde_eigenvalues"); CHKERRQ(ierr);
-	MatDestroy(&fullAtilde);
+	if (!dummyDMD) {
+		Mat fullAtilde;
+		ierr = calcLowRankSVDApprox(svd, X.num_cols - 1, fullSVD, "SnapshotsMat-Full"); CHKERRQ(ierr);
+		/* Finds the FULL Atilde using all the columns (all the modes) */
+		ierr = calcBestFitlrSVD(fullSVD, fullAtilde); CHKERRQ(ierr);
+		/* Calculates the eigenvalues of the FULL Atilde */
+		ierr = calcEigenvalues(fullSVD, fullAtilde, "fullAtilde_eigenvalues"); CHKERRQ(ierr);
+		MatDestroy(&fullAtilde);
+	}
 #endif
 
 	ierr = calcBestFitlrSVD(lrSVD, Atilde); CHKERRQ(ierr);
 	/* ------------ Eigen analysis of Atilde -------------*/
-	ierr = calcEigenvalues(lrSVD, Atilde, "LowRank-Eigenvalues", true); CHKERRQ(ierr);
+	if (!dummyDMD) {
+		ierr = calcEigenvalues(lrSVD, Atilde, "LowRank-Eigenvalues", true); CHKERRQ(ierr);
+	} else {
+		ierr = calcDominantModePeriod(Atilde); CHKERRQ(ierr);
+	}
 
 	return ierr;
 }
+
+
 
 /*
  * This function does not consider complex numbers - SHOULD BE FIXED!!!
@@ -425,6 +433,15 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 	return ierr;
 }
 
+PetscErrorCode DMD::DummyDMD(){
+	PetscErrorCode ierr;
+
+	ierr = prepareData(); CHKERRQ(ierr);
+	ierr = regression(); CHKERRQ(ierr);
+
+	return ierr;
+}
+
 PetscErrorCode DMD::solveSVD(SVD& svd, Mat& mMatrix){
 	PetscErrorCode ierr;
 	PetscInt nsv{};
@@ -483,7 +500,6 @@ PetscErrorCode DMD::computeSVDRank(SVD &svd) {
 	ierr = SVDGetConverged(svd, &nconv); CHKERRQ(ierr);
 
 	for (int j = 0; j < nconv; j++) {
-		PetscInt index = j;
 		ierr = SVDGetSingularTriplet(svd, j, &sigma, NULL, NULL); CHKERRQ(ierr);
 		sigmaVec.push_back(sigma);
 
@@ -563,7 +579,6 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 	for (int j = 0; j < numCols; j++) {
 		PetscInt index = j;
 		ierr = SVDGetSingularTriplet(svd, j, &sigma, u, v); CHKERRQ(ierr);
-
 
 		if (j > 0 && j < numCols) {
 			sig2 = sigma;
@@ -670,6 +685,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	PetscInt nconv;
 	EPS eps;
 	PetscInt rank;
+	ComplexSTLVec omega;
 
 	ierr = MatGetSize(matrix, &rank, NULL); CHKERRQ(ierr);
 
@@ -721,11 +737,10 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 #endif
 
 	/* ------ Extracting eigenvalues --------- */
-	PetscScalar dVecr, dVeci;
 	PetscScalar dReal, dImag, dError;
-	Vec vr, vi;
 
 #ifdef COMPLEX_NUMBER_PROBLEM
+	Vec vr, vi;
 	if (calcEigenvectors){
 		ierr = MatCreateVecs(matrix, NULL, &vr); CHKERRQ(ierr);
 		ierr = MatCreateVecs(matrix, NULL, &vi); CHKERRQ(ierr);
@@ -745,26 +760,35 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 
 	ierr = PetscPrintf(PETSC_COMM_WORLD, "\nExtracting %s...\n", sFileName.c_str()); CHKERRQ(ierr);
 
-	std::fprintf(fEigs, "VARIABLES = \"NUM\" \"Real\" \"Imag\" \"Rel. Error\"\n");
+	std::fprintf(fEigs, "VARIABLES = \"NUM\" \"sigma-Real\" \"sigma-Imag\" \"Rel. Error\" \"Eig-Real\""
+			"\"Eig-Imag\"\n");
 
 	for (PetscInt i = 0; i < nconv; i++) {
 
 //		if (calcEigenvectors) {
 //			ierr = EPSGetEigenpair(eps, i, &dReal, &dImag, vr, vi);	CHKERRQ(ierr);
 //		} else {
-
+		// actually, amplification factor
 		ierr = EPSGetEigenvalue(eps, i, &dReal, &dImag);CHKERRQ(ierr);
-
-
 		ierr = EPSComputeError(eps, i, EPS_ERROR_RELATIVE, &dError);CHKERRQ(ierr);
 		LowSVD.eigs.push_back({dReal, dImag});
+
+		// Computing omega - solutions eigenvalues
+		ComplexNum tmp2 = log(LowSVD.eigs[i]);
+		assert(isfinite(std::real(tmp2)) && "Omega has infinite value!!\n\n");
+		omega.push_back(tmp2 / dt);
+		double OmegaReal = omega[i].real();
+		double OmegaImag = omega[i].imag();
+
+		std::fprintf(fEigs, "%.2i\t%.12g\t%12g\t%.12g\t%.12g\t%.12g\t\n", i + 1,
+				dReal, dImag, dError, OmegaReal, OmegaImag);
 
 #ifdef PRINT_EIGENVALUES
 		printf("eigen %i: %f %fi\n", i + 1, std::real(LowSVD.eigs[i]), std::imag(LowSVD.eigs[i]));
 #endif
-		std::fprintf(fEigs, "%.2i\t%.12g\t%12g\t%.12g\n", i + 1, dReal, dImag, dError);
-
 #ifdef COMPLEX_NUMBER_PROBLEM
+		PetscScalar dVecr, dVeci;
+
 		if (calcEigenvectors) {
 			for (int row = 0; row < rank; row++) {
 				/* Get values one-by-one and write them one at a time */
@@ -802,6 +826,43 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	}
 #endif
 
+	return ierr;
+}
+
+PetscErrorCode DMD::calcDominantModePeriod(Mat& matrix) {
+	PetscErrorCode ierr;
+	EPS eps;
+	PetscInt rank;
+
+	ierr = MatGetSize(matrix, &rank, NULL); CHKERRQ(ierr);
+
+	/* -----Solving eigenvalue problem ---*/
+	ierr = EPSCreate(PETSC_COMM_WORLD, &eps); CHKERRQ(ierr);
+	ierr = EPSSetOperators(eps, matrix, PETSC_NULL); CHKERRQ(ierr);
+	ierr = EPSSetProblemType(eps, EPS_NHEP); CHKERRQ(ierr);
+	ierr = EPSSetType(eps, EPSLAPACK); CHKERRQ(ierr);
+	ierr = EPSSetWhichEigenpairs(eps, EPS_LARGEST_REAL); CHKERRQ(ierr);
+	ierr = EPSSetDimensions(eps, rank, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
+	ierr = EPSSetTolerances(eps, 1e-10, 10); CHKERRQ(ierr);
+	ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
+
+	ierr = EPSSolve(eps);	CHKERRQ(ierr);
+
+	/* ------ Extracting eigenvalues --------- */
+	PetscScalar dReal, dImag;
+
+	ierr = EPSGetEigenvalue(eps, 0, &dReal, &dImag); CHKERRQ(ierr);
+	if (abs(dImag) <= 1e-15) {
+		ierr = PetscPrintf(PETSC_COMM_WORLD,
+				"\nCalc Dominant Mode Period: Dominant eigenvalue is Real\n");	CHKERRQ(ierr);
+		return ierr;
+	}
+	ComplexNum dominantEig(dReal, dImag);
+	ComplexNum tmp2 = log(dominantEig);
+	PetscReal EigImag = std::imag(tmp2);
+	iOsclPeriod = std::ceil(M_PIl / (dt * EigImag));
+
+	ierr = EPSDestroy(&eps);CHKERRQ(ierr);
 	return ierr;
 }
 
