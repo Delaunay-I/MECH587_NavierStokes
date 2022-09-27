@@ -14,15 +14,16 @@
 #define MAXSIZE (200+2)
 
 /* Setting up mesh size */
-#define IMAX 16  //number of nodes in the X direction
+#define IMAX 40  //number of nodes in the X direction
 #define JMAX 40 //number of nodes in the Y direction
+#define DDMDIter 200
 extern double dT;
 
 #define MAX_ITER 2500
 
 /* setting dimensions of the domain */
-#define Width 1.0
-#define Height 2.5
+#define Width 5.0
+#define Height 1.0
 
 #define dX (Width / IMAX)
 #define dY (Height / JMAX)

@@ -453,7 +453,6 @@ int main(int argc, char **argv) {
 	PetscErrorCode ierr;
 	PetscMPIInt size;
 	FILE* out{};
-	PetscBool flg;
 
 	ierr = SlepcInitialize(&argc, &argv, (char*) 0, (char*) 0); CHKERRQ(ierr);
 	if (ierr)
@@ -556,19 +555,8 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 				fprintf(fLOG, "iter: %i\t", iter);
 				fclose(fLOG);
 
-				PetscInt inumDMDModes;
-				ierr = PetscOptionsGetInt(NULL, NULL, "-num_dmdModes",
-						&inumDMDModes, &flg);
-				CHKERRQ(ierr);
-				if (!flg) {
-					PetscErrorPrintf(
-							"Did you set the number of modes to eliminate?\n"
-									" Setting it to 1: for regress model only.\n\n");
-					inumDMDModes = 1;
-				}
-
 				PetscReal dTimeStep = dT;
-				DMD a_dmd(&snap.mat, inumDMDModes, dTimeStep);
+				DMD a_dmd(&snap.mat, dTimeStep);
 
 				ierr = a_dmd.applyDMDMatTrans();
 				CHKERRQ(ierr);
@@ -616,17 +604,14 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBoo
 
 	_snapshots_type snap;
 	Vec vvGlobal;
+	PetscReal dTimeStep = dT;
 
-	int iSCP { 100 }; //Slope Check Period
+	int iSCP{}; //Slope Check Period
 	// variables for checking the slope of the residual
 	std::vector<double> LRx; // x values
 	std::deque<double> LRy { }; // y values
 	PetscScalar slope, intercept;
 	PetscScalar slope_old, slope_ratio;
-
-	for (int j = 0; j < iSCP; j++) {
-		LRx.push_back(j);
-	}
 
 	/* Implicit time advance of the Navier--Stokes system */
 	for (; iter <= numIters; iter++) {
@@ -635,6 +620,17 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBoo
 		calc_fluxJacobians(Soln, Bx, Cx, Ax, By, Cy, Ay);
 
 		MaxChange = ApproximateFactorization(Soln, FI);
+
+		if (iter == DDMDIter) {
+
+			DMD DMDTest(&snap.mat, dTimeStep);
+			ierr = DMDTest.DummyDMD(); CHKERRQ(ierr);
+			iSCP = DMDTest.iGetDominantPeriod();
+
+			for (int j = 0; j < iSCP; j++) {
+				LRx.push_back(j);
+			}
+		}
 
 		// Handling the residual, data to decide when to apply the relaxation //
 		LRy.push_back(MaxChange);
@@ -686,22 +682,8 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBoo
 			fprintf(fLOG, "iter: %i\t", iter);
 			fclose(fLOG);
 
-			PetscInt inumDMDModes;
-			ierr = PetscOptionsGetInt(NULL, NULL, "-num_dmdModes",
-					&inumDMDModes, &flg);
-			CHKERRQ(ierr);
-			if (!flg) {
-				PetscErrorPrintf(
-						"Did you set the number of modes to eliminate?\n"
-								" Setting it to 1: for regress model only.\n\n");
-				inumDMDModes = 1;
-			}
-
-			PetscReal dTimeStep = dT;
-			DMD a_dmd(&snap.mat, inumDMDModes, dTimeStep);
-
-			ierr = a_dmd.applyDMDMatTrans();
-			CHKERRQ(ierr);
+			DMD a_dmd(&snap.mat, dTimeStep);
+			ierr = a_dmd.applyDMDMatTrans(); CHKERRQ(ierr);
 
 			Vec vUpdate { };
 			vUpdate = a_dmd.vgetUpdate();

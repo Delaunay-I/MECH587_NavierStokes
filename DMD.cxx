@@ -9,8 +9,8 @@
 
 int DMD::isDMD_execs = 0;
 
-DMD::DMD(const Mat *svdMat, PetscInt iModes, PetscReal DT) :
-	iNumModes(iModes), dt(DT) {
+DMD::DMD(const Mat *svdMat, PetscReal DT) :
+	 dt(DT) {
 
 	/* Opening a log file to write some results, to access after code execution */
 	fLog = fopen("Log.dat", "a");
@@ -402,23 +402,23 @@ PetscErrorCode DMD::computeUpdate(PetscInt iMode){
 	return ierr;
 }
 
-PetscErrorCode DMD::applyDMD(){
-	PetscErrorCode ierr;
-
-	ierr = prepareData();
-	CHKERRQ(ierr);
-	ierr = regression();
-	CHKERRQ(ierr);
-//	ierr = calcDMDmodes();
+//PetscErrorCode DMD::applyDMD(){
+//	PetscErrorCode ierr;
+//
+//	ierr = prepareData();
 //	CHKERRQ(ierr);
-
-	for(int i = 0; i < iNumModes; i++){
-		ierr = computeUpdate(i);
-			CHKERRQ(ierr);
-	}
-
-	return ierr;
-}
+//	ierr = regression();
+//	CHKERRQ(ierr);
+////	ierr = calcDMDmodes();
+////	CHKERRQ(ierr);
+//
+//	for(int i = 0; i < iNumModes; i++){
+//		ierr = computeUpdate(i);
+//			CHKERRQ(ierr);
+//	}
+//
+//	return ierr;
+//}
 
 PetscErrorCode DMD::applyDMDMatTrans() {
 	PetscErrorCode ierr;

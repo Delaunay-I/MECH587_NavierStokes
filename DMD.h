@@ -44,7 +44,7 @@ class DMD {
 private:
 	PetscInt *row_index{};
 	PetscInt svdRank{}; //number of columns in SVD modes, also the truncation of SVD
-	PetscInt iNumModes{};
+//	PetscInt iNumModes{}; // Outdated parameter - First need to fix calcDMDmodes() member function
 	PetscReal dt;
 	PetscInt iOsclPeriod; // Oscillation period of the dominant Mode
 	FILE* fLog;
@@ -79,7 +79,7 @@ private:
 
 public:
 
-	DMD(const Mat *Data, PetscInt iModes, PetscReal DT);
+	DMD(const Mat *Data, PetscReal DT);
 	virtual ~DMD();
 	PetscErrorCode prepareData();
 
@@ -88,7 +88,7 @@ public:
 	PetscErrorCode computeUpdate(PetscInt iMode);
 	PetscErrorCode computeMatTransUpdate();
 
-	PetscErrorCode applyDMD();
+//	PetscErrorCode applyDMD(); Outdated parameter - First need to fix calcDMDmodes() member function
 	PetscErrorCode applyDMDMatTrans();
 	PetscErrorCode DummyDMD();
 
