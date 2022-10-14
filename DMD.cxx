@@ -48,17 +48,31 @@ DMD::DMD(const Mat *svdMat, PetscReal DT) :
 
 
 	/* creating a few directories */
-	if (!IsPathExist(DEB_MAT_DIR)) {
-		if (mkdir(DEB_MAT_DIR.c_str(), 0777) == -1)
-			PetscErrorPrintf("Error : %s \n", strerror(errno));
-		else
-			PetscPrintf(PETSC_COMM_WORLD, "%s created", DEB_MAT_DIR);
+	if (!IsPathExist(DEB_DIR)) {
+		const int dir_err = mkdir(DEB_DIR.c_str(),
+				S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+		if (-1 == dir_err) {
+			printf("Error creating directory %s\n", DEB_MAT_DIR.c_str());
+			exit(1);
+		}
 	}
+
+	if (!IsPathExist(DEB_MAT_DIR)) {
+		const int dir_err = mkdir(DEB_MAT_DIR.c_str(),
+				S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+		if (-1 == dir_err) {
+			printf("Error creating directory %s\n", DEB_MAT_DIR.c_str());
+			exit(1);
+		}
+	}
+
 	if (!IsPathExist(DEB_TOOL_DIR)) {
-		if (mkdir(DEB_TOOL_DIR.c_str(), 0777) == -1)
-			PetscErrorPrintf("Error : %s \n", strerror(errno));
-		else
-			PetscPrintf(PETSC_COMM_WORLD, "%s created", DEB_TOOL_DIR);
+		const int dir_err = mkdir(DEB_TOOL_DIR.c_str(),
+				S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+		if (-1 == dir_err) {
+			printf("Error creating directory %s\n", DEB_TOOL_DIR.c_str());
+			exit(1);
+		}
 	}
 
 }
@@ -85,8 +99,6 @@ DMD::~DMD() {
 	MatDestroy(&time_dynamics);
 	VecDestroy(&update);
 
-	/* counting the number of calls to this class */
-	isDMD_execs++;
 }
 
 
@@ -166,7 +178,12 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	PetscErrorCode ierr;
 	SVD svd;
 
+	auto start = std::chrono::steady_clock::now();
+
 	ierr = solveSVD(svd, X1); CHKERRQ(ierr);
+
+	std::string sMessage = "DMD - SVD time";
+	recordTime(start, sMessage);
 
 	// Compute the proper rank if requested
 	if (flg_autoRankDMD) {
@@ -340,7 +357,11 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 				"\nComputing the inverse..\n");
 		CHKERRQ(ierr);
 
+	auto start = std::chrono::steady_clock::now();
 	ierr = lapackMatInv(lhs); CHKERRQ(ierr);
+	std::string sMessage = "DMD - Matrix inverse (initial conditions) time";
+	recordTime(start, sMessage);
+
 	ierr = MatMatMult(lhs, Atilde, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &Gtilde); CHKERRQ(ierr);
 
 #ifdef DEBUG_DMD
@@ -362,23 +383,26 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 	ierr = SVDDestroy(&svd); CHKERRQ(ierr);
 #endif
 
-	Mat mTmp{}, mTmp2{};
-	Vec X2_end{};
+	Mat UrGt{};
+	Vec X2_end{}, X2_end_tilde{};
 	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &X2_end); CHKERRQ(ierr);
 	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &update); CHKERRQ(ierr);
+	ierr = VecCreateSeq(PETSC_COMM_SELF, svdRank, &X2_end_tilde); CHKERRQ(ierr);
 
+	start = std::chrono::steady_clock::now();
 	ierr = MatGetColumnVector(X2, X2_end, X.num_cols - 2); CHKERRQ(ierr);
-	ierr = MatMatMult(lrSVD.Ur, Gtilde, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &mTmp); CHKERRQ(ierr);
-	ierr = MatMatTransposeMult(mTmp, lrSVD.Ur, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &mTmp2); CHKERRQ(ierr);
-
-	ierr = MatMult(mTmp2, X2_end, update); CHKERRQ(ierr);
+	ierr = MatMultTranspose(lrSVD.Ur, X2_end, X2_end_tilde); CHKERRQ(ierr);
+	ierr = MatMatMult(lrSVD.Ur, Gtilde, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &UrGt); CHKERRQ(ierr);
+	ierr = MatMult(UrGt, X2_end_tilde, update);
+	sMessage = "DMD - update2 time";
+	recordTime(start, sMessage);
 
 	ierr = MatDestroy(&Ir); CHKERRQ(ierr);
 	ierr = MatDestroy(&lhs); CHKERRQ(ierr);
 	ierr = MatDestroy(&Gtilde); CHKERRQ(ierr);
-	ierr = MatDestroy(&mTmp); CHKERRQ(ierr);
-	ierr = MatDestroy(&mTmp2); CHKERRQ(ierr);
+	ierr = MatDestroy(&UrGt); CHKERRQ(ierr);
 	ierr = VecDestroy(&X2_end); CHKERRQ(ierr);
+	ierr = VecDestroy(&X2_end_tilde); CHKERRQ(ierr);
 
 	return ierr;
 }
@@ -417,6 +441,8 @@ PetscErrorCode DMD::computeUpdate(PetscInt iMode){
 //			CHKERRQ(ierr);
 //	}
 //
+//	/* counting the number of calls to this class */
+//	isDMD_execs++;
 //	return ierr;
 //}
 
@@ -425,19 +451,34 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 
 	printMatMATLAB("data", "data", *X.mat);
 
+	auto start = std::chrono::steady_clock::now();
 	ierr = prepareData();CHKERRQ(ierr);
-	ierr = regression();CHKERRQ(ierr);
-//	ierr = calcDMDmodes();CHKERRQ(ierr);
-	ierr = computeMatTransUpdate();CHKERRQ(ierr);
+	std::string sMessage = "DMD - Splitting the snapshots time";
+	recordTime(start, sMessage);
 
+	start = std::chrono::steady_clock::now();
+	ierr = regression();CHKERRQ(ierr);
+	sMessage = "DMD - SVD and computing the best-fit time:";
+	recordTime(start, sMessage);
+
+//	ierr = calcDMDmodes();CHKERRQ(ierr);
+
+	start = std::chrono::steady_clock::now();
+	ierr = computeMatTransUpdate();CHKERRQ(ierr);
+	sMessage = "DMD - computeMatTransUpdate() time:";
+	recordTime(start, sMessage);
+	/* counting the number of calls to this class */
+	isDMD_execs++;
 	return ierr;
 }
 
 PetscErrorCode DMD::DummyDMD(){
 	PetscErrorCode ierr;
+	DMD::isDMD_execs = 0;
+	printMatMATLAB("DumData", "data", *X.mat);
 
 	ierr = prepareData(); CHKERRQ(ierr);
-	ierr = regression(); CHKERRQ(ierr);
+	ierr = regression(true); CHKERRQ(ierr);
 
 	return ierr;
 }
@@ -588,7 +629,7 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 		if (j < numCols - 1) {
 			sig1 = sigma;
 			if (j == 0) {
-				out << sigma << std::endl;
+				out << sigma << "\t" << 0 << std::endl;
 			}
 		}
 
@@ -832,7 +873,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 PetscErrorCode DMD::calcDominantModePeriod(Mat& matrix) {
 	PetscErrorCode ierr;
 	EPS eps;
-	PetscInt rank;
+	PetscInt rank, nconv;
 
 	ierr = MatGetSize(matrix, &rank, NULL); CHKERRQ(ierr);
 
@@ -847,18 +888,27 @@ PetscErrorCode DMD::calcDominantModePeriod(Mat& matrix) {
 	ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
 
 	ierr = EPSSolve(eps);	CHKERRQ(ierr);
+	ierr = EPSGetConverged(eps, &nconv); CHKERRQ(ierr);
+
 
 	/* ------ Extracting eigenvalues --------- */
 	PetscScalar dReal, dImag;
 
+	for (PetscInt i = 0; i < nconv; i++) {
+		ierr = EPSGetEigenvalue(eps, i, &dReal, &dImag);CHKERRQ(ierr);
+		printf("eigen %i: %f %fi\n", i + 1, dReal, dImag);
+	}
+
 	ierr = EPSGetEigenvalue(eps, 0, &dReal, &dImag); CHKERRQ(ierr);
+	printf ("\nimag: %f\n", dImag);
 	if (abs(dImag) <= 1e-15) {
 		ierr = PetscPrintf(PETSC_COMM_WORLD,
 				"\nCalc Dominant Mode Period: Dominant eigenvalue is Real\n");	CHKERRQ(ierr);
+		iOsclPeriod = 0;
 		return ierr;
 	}
 	ComplexNum dominantEig(dReal, dImag);
-	ComplexNum tmp2 = log(dominantEig);
+	ComplexNum tmp2 = log(dominantEig)/dt;
 	PetscReal EigImag = std::imag(tmp2);
 	iOsclPeriod = std::ceil(M_PIl / (dt * EigImag));
 
@@ -977,6 +1027,14 @@ PetscErrorCode DMD::printMatPYTHON(std::string sFilename,
 	PetscViewerDestroy(&viewer);
 
 	return ierr;
+}
+
+void DMD::recordTime(std::chrono::steady_clock::time_point start,
+		std::string sMessage){
+	auto stop =	std::chrono::steady_clock::now();
+	std::chrono::duration<double> duration = stop - start;
+//	std::printf("%s: %f [seconds]\n", sMessage.c_str(), duration.count());
+	fprintf(fLog, "%s: %f [seconds]\n", sMessage.c_str(), duration.count());
 }
 
 

@@ -16,9 +16,7 @@
 #include <complex.h>
 #include <cassert>
 
-#include <bits/stdc++.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <fstream>
 
 #include <petscksp.h>
@@ -27,10 +25,10 @@
 #include <cblas.h>
 #include <lapacke.h>
 
-#define DEBUG_DMD
+//#define DEBUG_DMD
 //#define DEBUG_DMD_EPS
 //#define PRINT_EIGENVALUES
-#define DMD_CHECK_EIGS
+//#define DMD_CHECK_EIGS
 //#define DMD_SIGMARATIO
 //#define CALC_CONDITION_NUMBER_OF_UPDATE
 //#define COMPLEX_NUMBER_PROBLEM
@@ -46,7 +44,7 @@ private:
 	PetscInt svdRank{}; //number of columns in SVD modes, also the truncation of SVD
 //	PetscInt iNumModes{}; // Outdated parameter - First need to fix calcDMDmodes() member function
 	PetscReal dt;
-	PetscInt iOsclPeriod; // Oscillation period of the dominant Mode
+	PetscInt iOsclPeriod = 0; // Oscillation period of the dominant Mode
 	FILE* fLog;
 
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
@@ -71,6 +69,7 @@ private:
 	_svd lrSVD, fullSVD;
 	_DATA X;
 
+	const std::string DEB_DIR{"debug_tools"};
 	const std::string DEB_MAT_DIR{"debug_tools/mats/"};
 	const std::string DEB_TOOL_DIR{"debug_tools/tools/"};
 
@@ -131,6 +130,9 @@ public:
 			std::string sVectorName, Vec V) const;
 	PetscErrorCode printMatPYTHON(std::string sFilename,
 			std::string sMatrixName, Mat A) const;
+
+	void recordTime(std::chrono::steady_clock::time_point start,
+			std::string sMessage);
 
 	bool IsPathExist(const std::string &s)
 	{
