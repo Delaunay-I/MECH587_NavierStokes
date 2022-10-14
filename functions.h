@@ -16,7 +16,6 @@
 /* Setting up mesh size */
 #define IMAX 40  //number of nodes in the X direction
 #define JMAX 40 //number of nodes in the Y direction
-#define DDMDIter 200
 extern double dT;
 
 #define MAX_ITER 2500
