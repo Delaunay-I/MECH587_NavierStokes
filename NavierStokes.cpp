@@ -22,12 +22,13 @@ struct _snapshots_type{
 
 /* Time Advance option */
 PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt& numIters, PetscInt*& dmdIter, PetscBool& flg_DMD);
-PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBool &flg_DMD);
+PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,
+		PetscInt &iDummyDMDIter, PetscBool &flg_DMD);
 
 /* DMD added Functions */
 PetscErrorCode readOpts(PetscReal &dT, PetscInt &max_iter_total,
 		PetscBool &flg_DMD, PetscBool &flg_dmdAuto, PetscInt &nDMD,
-		PetscInt *&dmdIter);
+		PetscInt *&dmdIter, PetscInt& iDummyDMDIter);
 PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap);
 PetscErrorCode updateSolutionMatrix(Vec& vec, _snapshots_type& snap);
 
@@ -451,19 +452,18 @@ double ApproximateFactorization(double*** Soln, double*** FI) {
 
 int main(int argc, char **argv) {
 	PetscErrorCode ierr;
-	PetscMPIInt size;
 	FILE* out{};
 
+	ierr = PetscInitialize(&argc, &argv, (char*) 0, (char*) 0); CHKERRQ(ierr);
 	ierr = SlepcInitialize(&argc, &argv, (char*) 0, (char*) 0); CHKERRQ(ierr);
 	if (ierr)
 		return ierr;
 
-	ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
-
-	PetscInt numIters, nDMD, *dmdIter;
+	PetscInt numIters, nDMD, *dmdIter, iDummyDMDIter;
 	PetscBool flg_DMD, flg_dmdAuto;
 
-	ierr = readOpts(dT, numIters, flg_DMD, flg_dmdAuto, nDMD, dmdIter); CHKERRQ(ierr);
+	ierr = readOpts(dT, numIters, flg_DMD, flg_dmdAuto, nDMD, dmdIter, iDummyDMDIter); CHKERRQ(ierr);
+	printf("\ndummy dmd iter is: %3d\n", iDummyDMDIter);
 
 	memory_allocation();
 
@@ -476,7 +476,7 @@ int main(int argc, char **argv) {
 		ierr = TimeAdvance(nDMD, numIters, dmdIter, flg_DMD);	CHKERRQ(ierr);
 	} // Automatically set DMD
 	else {
-		ierr = TimeAdvanceSmart(numIters, dmdIter, flg_DMD); CHKERRQ(ierr);
+		ierr = TimeAdvanceSmart(numIters, dmdIter, iDummyDMDIter, flg_DMD); CHKERRQ(ierr);
 	}
 
 	write_tecplot(out, "Field_data.dat", Soln);
@@ -486,6 +486,7 @@ int main(int argc, char **argv) {
 		ierr = PetscFree(dmdIter); CHKERRQ(ierr);
 	}
 	memory_deallocate();
+	ierr = PetscFinalize(); CHKERRQ(ierr);
 	ierr = SlepcFinalize(); CHKERRQ(ierr);
 
 	return 0;
@@ -494,7 +495,6 @@ int main(int argc, char **argv) {
 PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 		PetscInt *&dmdIter, PetscBool &flg_DMD) {
 	PetscErrorCode ierr;
-	PetscBool flg;
 	int iter { 1 };
 	double MaxChange { };
 
@@ -550,6 +550,8 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 
 			if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
 
+				auto start = std::chrono::steady_clock::now();
+
 				FILE *fLOG;
 				fLOG = fopen("Log.dat", "a");
 				fprintf(fLOG, "iter: %i\t", iter);
@@ -575,6 +577,9 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 							FI[i][j][k] = value;
 							Soln[i][j][k] += value;
 						}
+				std::string sMessage = "Total DMD time";
+				a_dmd.recordTime(start, sMessage);
+
 			}
 
 			if (MaxChange < 1.e-10 || iter == numIters) {
@@ -591,9 +596,9 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 	return ierr;
 }
 
-PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBool &flg_DMD) {
+PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,
+		PetscInt &iDummyDMDIter, PetscBool &flg_DMD) {
 	PetscErrorCode ierr;
-	PetscBool flg;
 	int iter { 1 };
 	double MaxChange { };
 
@@ -609,9 +614,9 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBoo
 	int iSCP{}; //Slope Check Period
 	// variables for checking the slope of the residual
 	std::vector<double> LRx; // x values
-	std::deque<double> LRy { }; // y values
+	std::deque<double> dResWin { }; // y values
 	PetscScalar slope, intercept;
-	PetscScalar slope_old, slope_ratio;
+	PetscScalar slope_old, slope_ratio = 0;
 
 	/* Implicit time advance of the Navier--Stokes system */
 	for (; iter <= numIters; iter++) {
@@ -621,33 +626,42 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,	PetscBoo
 
 		MaxChange = ApproximateFactorization(Soln, FI);
 
-		if (iter == DDMDIter) {
+		if (iter == iDummyDMDIter) {
 
 			DMD DMDTest(&snap.mat, dTimeStep);
 			ierr = DMDTest.DummyDMD(); CHKERRQ(ierr);
 			iSCP = DMDTest.iGetDominantPeriod();
+			ierr = PetscPrintf(PETSC_COMM_WORLD,
+							"\nFor Width: %3f, Height: %3f, the oscillation period is computed as: %3d\n",
+							Width, Height, iSCP); CHKERRQ(ierr);
 
 			for (int j = 0; j < iSCP; j++) {
 				LRx.push_back(j);
 			}
 		}
 
+		if (iter >= iDummyDMDIter)
+			dResWin.push_back(MaxChange);
+
 		// Handling the residual, data to decide when to apply the relaxation //
-		LRy.push_back(MaxChange);
-		if (iter > iSCP) {
-			LRy.pop_front();
-			Linear_Regression(LRx, LRy, slope, intercept);
+		if (iter >= iDummyDMDIter + iSCP && abs(iSCP) > 1) {
+			dResWin.pop_front();
+
+			Linear_Regression(LRx, dResWin, slope, intercept);
 
 			if (iter % (iSCP) == 0) {
 				slope_ratio = slope / slope_old;
 				slope_old = slope;
-			} else
+			} else {
 				slope_ratio = -1;
-			fprintf(residual, "%4d %12.5G\t %.8G\t %8.5G\n", iter, MaxChange,
-					slope, slope_ratio);
+			}
+
+			fprintf(residual, "%4d %12.5G\t %.8G\t %8.5G\n", iter, MaxChange, slope, slope_ratio);
+
 		} else {
 			fprintf(residual, "%4d %12.5G\t%.i\n", iter, MaxChange, 0);
 		}
+
 		ierr = PetscPrintf(PETSC_COMM_WORLD, "iter: %i dT: %3f fnorm: %6e\n",
 				iter, dT, MaxChange);
 		CHKERRQ(ierr);
@@ -748,49 +762,62 @@ void get_l2norm(FILE* solution, int iter) {
 
 PetscErrorCode readOpts(PetscReal &dT, PetscInt &max_iter_total,
 		PetscBool &flg_DMD, PetscBool &flg_dmdAuto, PetscInt &nDMD,
-		PetscInt *&dmdIter) {
+		PetscInt *&dmdIter, PetscInt &iDummyDMDIter) {
 	PetscErrorCode ierr;
 	PetscBool flg;
 
-	ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &dT, &flg); CHKERRQ(ierr);
-	if (!flg) {
-		ierr = PetscErrorPrintf("Missing -dt option!\n"); CHKERRQ(ierr);
+	ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &dT, &flg);
+	CHKERRQ(ierr);
+	if (!flg)
+		ierr = PetscErrorPrintf("Missing -dt option!\n");	CHKERRQ(ierr);
 
-	}
+	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-max_iter_total",
+			&max_iter_total, &flg);	CHKERRQ(ierr);
+	if (!flg)
+		PetscErrorPrintf("Missing -max_iter_total flag!\n");
 
-	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-max_iter_total",&max_iter_total, &flg); CHKERRQ(ierr);
-		if (!flg){
-			PetscErrorPrintf("Missing -max_iter_total flag!\n");
-//			exit(1);
-		}
+	/* ------------------- DMD Options ------------- */
 
-		ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);CHKERRQ(ierr);
-		ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD_auto_config", &flg_dmdAuto);	CHKERRQ(ierr);
+	ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD", &flg_DMD);	CHKERRQ(ierr);
+
+	if (flg_DMD) {
+		ierr = PetscOptionsHasName(NULL, PETSC_NULL, "-DMD_auto_config",
+				&flg_dmdAuto);	CHKERRQ(ierr);
 		if (flg_dmdAuto) {
 			ierr = PetscPrintf(PETSC_COMM_WORLD, "Auto configure DMD.\n"); CHKERRQ(ierr);
-		}else {
-			ierr = PetscPrintf(PETSC_COMM_WORLD, "Manually configuring DMD.\nConfig should be provided\n"); CHKERRQ(ierr);
-		}
-		if (flg_DMD && !flg_dmdAuto) {
-			ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &nDMD, NULL); CHKERRQ(ierr);
-			ierr = PetscMalloc1(nDMD + 1, &dmdIter); CHKERRQ(ierr);
-			dmdIter[nDMD] = max_iter_total;
-
-			ierr = PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_its", dmdIter, &nDMD, &flg);CHKERRQ(ierr);
-			if (flg) {
-				if (nDMD < 1) {
-					PetscErrorPrintf("Incorrect argument for -DMD_its\n");
-					exit(1);
-				}
-			}
-			std::sort(dmdIter, dmdIter + nDMD + 1);
 		} else {
-			nDMD = 0;
-			ierr = PetscMalloc1(nDMD + 1, &dmdIter);
-			CHKERRQ(ierr);
-			dmdIter[nDMD] = max_iter_total;
+			ierr = PetscPrintf(PETSC_COMM_WORLD,
+					"Manually configuring DMD.\nConfig should be provided\n"); CHKERRQ(ierr);
 		}
-		return ierr;
+	}
+
+	if (flg_DMD && !flg_dmdAuto) {
+		ierr = PetscOptionsGetInt(NULL, NULL, "-DMD_nits", &nDMD, NULL); CHKERRQ(ierr);
+		ierr = PetscMalloc1(nDMD + 1, &dmdIter);
+		CHKERRQ(ierr);
+		dmdIter[nDMD] = max_iter_total;
+
+		ierr = PetscOptionsGetIntArray(PETSC_NULL, PETSC_NULL, "-DMD_its",
+				dmdIter, &nDMD, &flg); CHKERRQ(ierr);
+		if (flg) {
+			if (nDMD < 1) {
+				PetscErrorPrintf("Incorrect argument for -DMD_its\n");
+				exit(1);
+			}
+		}
+		std::sort(dmdIter, dmdIter + nDMD + 1);
+	} else if (flg_DMD && flg_dmdAuto) {
+
+		ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-DummyDMDIter",
+				&iDummyDMDIter, &flg); CHKERRQ(ierr);
+	if (!flg)
+		PetscErrorPrintf("Missing -DummyDMDIter flag!\n");
+
+	nDMD = 0;
+	ierr = PetscMalloc1(nDMD + 1, &dmdIter); CHKERRQ(ierr);
+	dmdIter[nDMD] = max_iter_total;
+	}
+	return ierr;
 }
 
 PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
