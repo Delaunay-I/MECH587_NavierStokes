@@ -7,6 +7,7 @@ Debug/
 *.dat
 *.o
 *.code-workspace
+*.m
 
 # Eclipse related directories
 .project

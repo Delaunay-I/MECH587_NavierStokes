@@ -1,7 +1,7 @@
 CC = mpic++
 
 # Compiler flags
-CFLAGS = -g #-v #-Wall
+CFLAGS = -g -Wall #-v
 LINKER_FLAGS = -Wl,–verbose
 
 EXTRA_FLAGS = -lm -lblas -llapack -llapacke -lpetsc -lslepc
