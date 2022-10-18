@@ -45,11 +45,12 @@ private:
 //	PetscInt iNumModes{}; // Outdated parameter - First need to fix calcDMDmodes() member function
 	PetscReal dt;
 	PetscInt iOsclPeriod = 0; // Oscillation period of the dominant Mode
+	PetscReal dUpdateNorm{};
 	FILE* fLog;
 
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
 
-	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
+	Mat X1 = PETSC_NULL, X2 = PETSC_NULL, X2_tilde = PETSC_NULL;
 	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL, time_dynamics_old = PETSC_NULL;
 
 	Vec update = NULL;
@@ -119,7 +120,8 @@ public:
 	PetscErrorCode calcDominantModePeriod(Mat& matrix);
 
 	PetscErrorCode lapackMatInv(Mat &A);
-
+	PetscErrorCode calcUpdateNorm(const _svd &LowSVD,
+			const Mat &mAtilde, const Mat &mX1, const Mat &mX2);
 
 	/* -----  Print functions  ------ */
 	PetscErrorCode printMatMATLAB(std::string sFilename,

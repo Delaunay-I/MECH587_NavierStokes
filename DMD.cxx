@@ -107,7 +107,7 @@ DMD::~DMD() {
  */
 PetscErrorCode DMD::prepareData(){
 	PetscErrorCode ierr;
-	PetscInt *X1col_index, *X2col_index;
+	PetscInt *X1col_index, *X2col_index, *rowIndex;
 	PetscScalar *dTmpArr;
 	PetscInt cols{X.num_cols}, rows{X.num_rows};
 
@@ -115,15 +115,30 @@ PetscErrorCode DMD::prepareData(){
 	ierr = PetscMalloc1(cols - 1, &X2col_index); CHKERRQ(ierr);
 	ierr = PetscMalloc1(rows*(cols - 1), &dTmpArr); CHKERRQ(ierr);
 
-
 	for (int i = 0; i < cols - 1; i++) {
 		X1col_index[i] = i; //X1col_index is used for both X1 and X2 for setting values
 		X2col_index[i] = i + 1;
 	}
 
-//	ierr = PetscPrintf(PETSC_COMM_WORLD,
-//			"Preparing matrices for Dynamic mode decomposition...\n");	CHKERRQ(ierr);
-
+	{ /* block for optimizing matrix split */
+//	Mat X1_sub, X2_sub;
+//	IS is_rows, is_X1cols, is_X2cols;
+//
+//	ierr = PetscMalloc1(rows, &rowIndex); CHKERRQ(ierr);
+//
+//	for (int i = 0; i < rows; i++) {
+//		rowIndex[i] = i;
+//	}
+//
+//	ierr = ISCreateGeneral(PETSC_COMM_SELF, cols - 1, X1col_index, PETSC_COPY_VALUES, &is_X1cols); CHKERRQ(ierr);
+//	ierr = ISCreateGeneral(PETSC_COMM_SELF, cols - 1, X2col_index, PETSC_COPY_VALUES, &is_X2cols); CHKERRQ(ierr);
+//	ierr = ISCreateGeneral(PETSC_COMM_SELF, rows, rowIndex, PETSC_COPY_VALUES, &is_rows); CHKERRQ(ierr);
+//
+//	ierr = MatCreateSubMatrix(*X.mat, is_rows, is_X1cols, &X1_sub); CHKERRQ(ierr);
+//	ierr = printMatPYTHON("X1sub", "X1", X1_sub); CHKERRQ(ierr);
+//
+//	ierr = MatDestroy(&X1_sub);CHKERRQ(ierr);
+	}
 	ierr = MatDestroy(&X1);	CHKERRQ(ierr);
 	ierr = MatDestroy(&X2);	CHKERRQ(ierr);
 
@@ -159,14 +174,6 @@ PetscErrorCode DMD::prepareData(){
 	ierr = MatAssemblyEnd(X2, MAT_FINAL_ASSEMBLY);
 	CHKERRQ(ierr);
 
-#ifdef DEBUG_DMD
-	printMatPYTHON(DEB_MAT_DIR + "X", "X", *X.mat);
-	printMatMATLAB(DEB_MAT_DIR + "X", "X", *X.mat);
-
-	printMatPYTHON(DEB_MAT_DIR + "X1", "X1", X1);
-	printMatPYTHON(DEB_MAT_DIR + "X2", "X2", X2);
-#endif
-
 	ierr = PetscFree(X1col_index); CHKERRQ(ierr);
 	ierr = PetscFree(X2col_index); CHKERRQ(ierr);
 	ierr = PetscFree(dTmpArr); CHKERRQ(ierr);
@@ -181,7 +188,6 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	auto start = std::chrono::steady_clock::now();
 
 	ierr = solveSVD(svd, X1); CHKERRQ(ierr);
-
 	std::string sMessage = "DMD - SVD time";
 	recordTime(start, sMessage);
 
@@ -190,7 +196,7 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 		ierr = computeSVDRank(svd); CHKERRQ(ierr);
 	}
 
-	printf("\nDMD was called %i times, current SVD approximation rank: %i\n",
+	printf("DMD was called %i times, current SVD approximation rank: %i\n",
 			isDMD_execs + 1, svdRank);
 
 	/*
@@ -331,6 +337,10 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 	PetscErrorCode ierr;
 	Mat Ir{}, lhs{}, Gtilde{};
 
+	ierr = calcUpdateNorm(lrSVD, Atilde, X1, X2); CHKERRQ(ierr);
+	assert(X2_tilde != PETSC_NULL
+			&& "X2_tilde isn't defined. Have you computed the norm? (X2_tilde is computed inside that function)");
+
 	ierr = MatDuplicate(Atilde, MAT_COPY_VALUES, &Ir);
 	CHKERRQ(ierr);
 	ierr = MatDuplicate(Atilde, MAT_COPY_VALUES, &lhs);
@@ -353,14 +363,7 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 
 	ierr = MatAYPX(lhs, -1, Ir, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
 
-	ierr = PetscPrintf(PETSC_COMM_WORLD,
-				"\nComputing the inverse..\n");
-		CHKERRQ(ierr);
-
-	auto start = std::chrono::steady_clock::now();
 	ierr = lapackMatInv(lhs); CHKERRQ(ierr);
-	std::string sMessage = "DMD - Matrix inverse (initial conditions) time";
-	recordTime(start, sMessage);
 
 	ierr = MatMatMult(lhs, Atilde, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &Gtilde); CHKERRQ(ierr);
 
@@ -384,24 +387,23 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 #endif
 
 	Mat UrGt{};
-	Vec X2_end{}, X2_end_tilde{};
-	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &X2_end); CHKERRQ(ierr);
+	Vec X2_end_tilde{};
 	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &update); CHKERRQ(ierr);
 	ierr = VecCreateSeq(PETSC_COMM_SELF, svdRank, &X2_end_tilde); CHKERRQ(ierr);
 
-	start = std::chrono::steady_clock::now();
-	ierr = MatGetColumnVector(X2, X2_end, X.num_cols - 2); CHKERRQ(ierr);
-	ierr = MatMultTranspose(lrSVD.Ur, X2_end, X2_end_tilde); CHKERRQ(ierr);
+	auto start = std::chrono::steady_clock::now();
+	ierr = MatGetColumnVector(X2_tilde, X2_end_tilde, X.num_cols - 2); CHKERRQ(ierr);
+	// UrGt = Ur * Gtilde
 	ierr = MatMatMult(lrSVD.Ur, Gtilde, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &UrGt); CHKERRQ(ierr);
+	// UrGt * X2_end_tilde
 	ierr = MatMult(UrGt, X2_end_tilde, update);
-	sMessage = "DMD - update2 time";
+	std::string sMessage = "DMD - computing the update (matrix mult.) time";
 	recordTime(start, sMessage);
 
 	ierr = MatDestroy(&Ir); CHKERRQ(ierr);
 	ierr = MatDestroy(&lhs); CHKERRQ(ierr);
 	ierr = MatDestroy(&Gtilde); CHKERRQ(ierr);
 	ierr = MatDestroy(&UrGt); CHKERRQ(ierr);
-	ierr = VecDestroy(&X2_end); CHKERRQ(ierr);
 	ierr = VecDestroy(&X2_end_tilde); CHKERRQ(ierr);
 
 	return ierr;
@@ -429,16 +431,12 @@ PetscErrorCode DMD::computeUpdate(PetscInt iMode){
 //PetscErrorCode DMD::applyDMD(){
 //	PetscErrorCode ierr;
 //
-//	ierr = prepareData();
-//	CHKERRQ(ierr);
-//	ierr = regression();
-//	CHKERRQ(ierr);
-////	ierr = calcDMDmodes();
-////	CHKERRQ(ierr);
+//	ierr = prepareData();CHKERRQ(ierr);
+//	ierr = regression();CHKERRQ(ierr);
+//	ierr = calcDMDmodes();CHKERRQ(ierr);
 //
 //	for(int i = 0; i < iNumModes; i++){
-//		ierr = computeUpdate(i);
-//			CHKERRQ(ierr);
+//		ierr = computeUpdate(i);CHKERRQ(ierr);
 //	}
 //
 //	/* counting the number of calls to this class */
@@ -698,21 +696,36 @@ PetscErrorCode DMD::calcBestFitlrSVD(_svd& LowSVD, Mat& mBestFit){
 	ierr = MatDuplicate(LowSVD.Sr, MAT_COPY_VALUES, &LowSVD.Sr_inv); CHKERRQ(ierr);
 	ierr = MatDiagonalSet(LowSVD.Sr_inv, vDiagSr, INSERT_VALUES); CHKERRQ(ierr);
 
-#ifdef DEBUG_DMD
-	printMatMATLAB(DEB_MAT_DIR + "Sr_inv", "Sr_inv", LowSVD.Sr_inv);
-#endif
 	// Constructing the best-fit regression of A (Atilde)
 	ierr = MatTransposeMatMult(LowSVD.Ur, X2, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &UrT_X2); CHKERRQ(ierr);
 	ierr = MatMatMatMult(UrT_X2, LowSVD.Vr, LowSVD.Sr_inv, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &mBestFit); CHKERRQ(ierr);
 
-#ifdef DEBUG_DMD
-	printMatPYTHON(DEB_MAT_DIR + "urtx2", "urtx2", UrT_X2);
-	printMatPYTHON(DEB_MAT_DIR + "Atilde", "Atilde", mBestFit);
-#endif
-
-
 	ierr = MatDestroy(&UrT_X2); CHKERRQ(ierr);
 	ierr = VecDestroy(&vDiagSr); CHKERRQ(ierr);
+	return ierr;
+}
+
+PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
+		const Mat &mX1, const Mat &mX2) {
+	PetscErrorCode ierr;
+	// Computing the norm of our truncation, by taking everything to low-dimensional subspace
+	auto start = std::chrono::steady_clock::now();
+	Mat X2t_copy, X1_tilde;
+	ierr = MatTransposeMatMult(LowSVD.Ur, mX1, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X1_tilde); CHKERRQ(ierr);
+	ierr = MatMatMult(mAtilde, X1_tilde, MAT_REUSE_MATRIX, PETSC_DEFAULT, &X1_tilde); CHKERRQ(ierr);
+	ierr = MatTransposeMatMult(LowSVD.Ur, mX2, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2_tilde); CHKERRQ(ierr);
+	ierr = MatDuplicate(X2_tilde, MAT_COPY_VALUES, &X2t_copy); CHKERRQ(ierr);
+	ierr = MatAXPY(X2t_copy, -1, X1_tilde, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
+
+	ierr = MatNorm(X2t_copy, NORM_FROBENIUS, &dUpdateNorm); CHKERRQ(ierr);
+	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
+
+	std::string sMessage = "DMD - Computing the Norm time";
+	recordTime(start, sMessage);
+
+	ierr = MatDestroy(&X2t_copy); CHKERRQ(ierr);
+	ierr = MatDestroy(&X1_tilde); CHKERRQ(ierr);
+
 	return ierr;
 }
 
@@ -780,6 +793,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	/* ------ Extracting eigenvalues --------- */
 	PetscScalar dReal, dImag, dError;
 
+	// For calcmodes
 #ifdef COMPLEX_NUMBER_PROBLEM
 	Vec vr, vi;
 	if (calcEigenvectors){
