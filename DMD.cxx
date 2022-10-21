@@ -17,7 +17,8 @@ DMD::DMD(const Mat *svdMat, PetscReal DT) :
 
 	/* Set the snapshots matrix and get the sizes of its rows and columns */
 	X.mat = svdMat;
-	MatGetSize(*X.mat, &X.num_rows, &X.num_cols);
+	/* Data is row-major, computations are based on column-major */
+	MatGetSize(*X.mat, &X.num_cols, &X.num_rows);
 	PetscMalloc1(X.num_rows, &row_index);
 
 	for (int i = 0; i < X.num_rows; i++) {
@@ -88,6 +89,7 @@ DMD::~DMD() {
 	PetscFree(row_index);
 	MatDestroy(&X1);
 	MatDestroy(&X2);
+	MatDestroy(&X2_tilde);
 	MatDestroy(&lrSVD.Ur);
 	MatDestroy(&lrSVD.Sr);
 	MatDestroy(&lrSVD.Vr);
@@ -95,7 +97,6 @@ DMD::~DMD() {
 	MatDestroy(&lrSVD.W);
 	MatDestroy(&Atilde);
 	MatDestroy(&Phi);
-	MatDestroy(&time_dynamics_old);
 	MatDestroy(&time_dynamics);
 	VecDestroy(&update);
 
@@ -104,58 +105,41 @@ DMD::~DMD() {
 
 /*
  * Splitting data into 2 matrices
+ * Hence the definition of the rows and columns are opposite
  */
 PetscErrorCode DMD::prepareData(){
 	PetscErrorCode ierr;
-	PetscInt *X1col_index, *X2col_index, *rowIndex;
+	PetscInt *X1row_index, *X2row_index;
 	PetscScalar *dTmpArr;
-	PetscInt cols{X.num_cols}, rows{X.num_rows};
+	PetscInt rows{X.num_cols}, cols{X.num_rows};
 
-	ierr = PetscMalloc1(cols - 1, &X1col_index); CHKERRQ(ierr);
-	ierr = PetscMalloc1(cols - 1, &X2col_index); CHKERRQ(ierr);
-	ierr = PetscMalloc1(rows*(cols - 1), &dTmpArr); CHKERRQ(ierr);
+	ierr = PetscMalloc1(rows - 1, &X1row_index); CHKERRQ(ierr);
+	ierr = PetscMalloc1(rows - 1, &X2row_index); CHKERRQ(ierr);
+	ierr = PetscMalloc1(cols*(rows - 1), &dTmpArr); CHKERRQ(ierr);
 
-	for (int i = 0; i < cols - 1; i++) {
-		X1col_index[i] = i; //X1col_index is used for both X1 and X2 for setting values
-		X2col_index[i] = i + 1;
+
+	for (int i = 0; i < rows - 1; i++) {
+		X1row_index[i] = i; //X1col_index is used for both X1 and X2 for setting values
+		X2row_index[i] = i + 1;
 	}
 
-	{ /* block for optimizing matrix split */
-//	Mat X1_sub, X2_sub;
-//	IS is_rows, is_X1cols, is_X2cols;
-//
-//	ierr = PetscMalloc1(rows, &rowIndex); CHKERRQ(ierr);
-//
-//	for (int i = 0; i < rows; i++) {
-//		rowIndex[i] = i;
-//	}
-//
-//	ierr = ISCreateGeneral(PETSC_COMM_SELF, cols - 1, X1col_index, PETSC_COPY_VALUES, &is_X1cols); CHKERRQ(ierr);
-//	ierr = ISCreateGeneral(PETSC_COMM_SELF, cols - 1, X2col_index, PETSC_COPY_VALUES, &is_X2cols); CHKERRQ(ierr);
-//	ierr = ISCreateGeneral(PETSC_COMM_SELF, rows, rowIndex, PETSC_COPY_VALUES, &is_rows); CHKERRQ(ierr);
-//
-//	ierr = MatCreateSubMatrix(*X.mat, is_rows, is_X1cols, &X1_sub); CHKERRQ(ierr);
-//	ierr = printMatPYTHON("X1sub", "X1", X1_sub); CHKERRQ(ierr);
-//
-//	ierr = MatDestroy(&X1_sub);CHKERRQ(ierr);
-	}
 	ierr = MatDestroy(&X1);	CHKERRQ(ierr);
 	ierr = MatDestroy(&X2);	CHKERRQ(ierr);
 
 	ierr = MatCreate(MPI_COMM_WORLD, &X1);	CHKERRQ(ierr);
-	ierr = MatSetSizes(X1, PETSC_DECIDE, PETSC_DECIDE, rows,
-			cols - 1);	CHKERRQ(ierr);
+	ierr = MatSetSizes(X1, PETSC_DECIDE, PETSC_DECIDE, rows - 1,
+			cols);	CHKERRQ(ierr);
 	ierr = MatSetType(X1, MATAIJ); CHKERRQ(ierr);
 	ierr = MatSetUp(X1);	CHKERRQ(ierr);
 
 	ierr = MatCreate(MPI_COMM_WORLD, &X2);	CHKERRQ(ierr);
-	ierr = MatSetSizes(X2, PETSC_DECIDE, PETSC_DECIDE, rows,
-			cols - 1);	CHKERRQ(ierr);
+	ierr = MatSetSizes(X2, PETSC_DECIDE, PETSC_DECIDE, rows - 1,
+			cols);	CHKERRQ(ierr);
 	ierr = MatSetType(X2, MATAIJ); CHKERRQ(ierr);
 	ierr = MatSetUp(X2);	CHKERRQ(ierr);
 
-	ierr = MatGetValues(*X.mat, rows, row_index, cols - 1, X1col_index, dTmpArr);
-	ierr = MatSetValues(X1, rows, row_index, cols - 1, X1col_index, dTmpArr,
+	ierr = MatGetValues(*X.mat, rows - 1, X1row_index, cols, row_index, dTmpArr);
+	ierr = MatSetValues(X1, rows - 1, X1row_index, cols, row_index, dTmpArr,
 			INSERT_VALUES);
 	CHKERRQ(ierr);
 
@@ -164,8 +148,8 @@ PetscErrorCode DMD::prepareData(){
 	ierr = MatAssemblyEnd(X1, MAT_FINAL_ASSEMBLY);
 	CHKERRQ(ierr);
 
-	ierr = MatGetValues(*X.mat, rows, row_index, cols - 1, X2col_index, dTmpArr);
-	ierr = MatSetValues(X2, rows, row_index, cols - 1, X1col_index, dTmpArr,
+	ierr = MatGetValues(*X.mat, rows - 1, X2row_index, cols, row_index, dTmpArr);
+	ierr = MatSetValues(X2, rows - 1, X1row_index, cols, row_index, dTmpArr,
 			INSERT_VALUES);
 	CHKERRQ(ierr);
 
@@ -174,8 +158,13 @@ PetscErrorCode DMD::prepareData(){
 	ierr = MatAssemblyEnd(X2, MAT_FINAL_ASSEMBLY);
 	CHKERRQ(ierr);
 
-	ierr = PetscFree(X1col_index); CHKERRQ(ierr);
-	ierr = PetscFree(X2col_index); CHKERRQ(ierr);
+	/* Make the matrices tall-skinny for compatibility with other functions */
+	ierr = MatTranspose(X1, MAT_INPLACE_MATRIX, &X1); CHKERRQ(ierr);
+	ierr = MatTranspose(X2, MAT_INPLACE_MATRIX, &X2); CHKERRQ(ierr);
+
+
+	ierr = PetscFree(X1row_index); CHKERRQ(ierr);
+	ierr = PetscFree(X2row_index); CHKERRQ(ierr);
 	ierr = PetscFree(dTmpArr); CHKERRQ(ierr);
 
 	return ierr;
@@ -465,6 +454,9 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 	ierr = computeMatTransUpdate();CHKERRQ(ierr);
 	sMessage = "DMD - computeMatTransUpdate() time:";
 	recordTime(start, sMessage);
+
+	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
+
 	/* counting the number of calls to this class */
 	isDMD_execs++;
 	return ierr;
@@ -718,7 +710,6 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 	ierr = MatAXPY(X2t_copy, -1, X1_tilde, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
 
 	ierr = MatNorm(X2t_copy, NORM_FROBENIUS, &dUpdateNorm); CHKERRQ(ierr);
-	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
 
 	std::string sMessage = "DMD - Computing the Norm time";
 	recordTime(start, sMessage);

@@ -51,7 +51,7 @@ private:
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
 
 	Mat X1 = PETSC_NULL, X2 = PETSC_NULL, X2_tilde = PETSC_NULL;
-	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL, time_dynamics_old = PETSC_NULL;
+	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL;
 
 	Vec update = NULL;
 

@@ -12,9 +12,9 @@
 struct _snapshots_type{
 	Mat mat=PETSC_NULL;
 	PetscInt iNumRows, iNumCols;
-	std::vector<PetscInt> row_index, column_indices;
-	std::vector<PetscInt> old_column_indices, new_column_indices;
-	std::vector<PetscInt> last_column_index; // REMOVE THIS
+	std::vector<PetscInt> col_index, row_indices;
+	std::vector<PetscInt> old_row_indices, new_row_indices;
+	std::vector<PetscInt> last_row_index; // REMOVE THIS
 	std::vector<PetscScalar> vValues; // REMOVE THIS
 	std::vector<PetscScalar> mValues; // REMOVE THIS //a placeholder for values - for updating svd results in SVD.mat
 	};
@@ -499,7 +499,7 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 	double MaxChange { };
 
 	FILE *residual, *solution;
-	residual = fopen("Residuals.dat", "w");
+	residual = fopen("Residual.dat", "w");
 	solution = fopen("solution.dat", "w");
 	fprintf(solution, "%4s %14s %14s %14s\n", "iter", "dP", "dU", "dV");
 
@@ -526,7 +526,8 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 
 			ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX * JMAX * 3, &vvGlobal);
 			CHKERRQ(ierr);
-			/* --------Not including the BCs-------- */
+			/* ----Flattening the solution into a PETSC vector----- */
+			/* --------------Not including the BCs----------------- */
 			for (int i = 1, index = 0; i <= IMAX; i++)
 				for (int j = 1; j <= JMAX; j++)
 					for (int k = 0; k < 3; k++, index++) {
@@ -554,7 +555,7 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 
 				FILE *fLOG;
 				fLOG = fopen("Log.dat", "a");
-				fprintf(fLOG, "iter: %i\t", iter);
+				fprintf(fLOG, "iter: %i\n", iter);
 				fclose(fLOG);
 
 				PetscReal dTimeStep = dT;
@@ -693,7 +694,7 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,
 
 			FILE *fLOG;
 			fLOG = fopen("Log.dat", "a");
-			fprintf(fLOG, "iter: %i\t", iter);
+			fprintf(fLOG, "iter: %i\n", iter);
 			fclose(fLOG);
 
 			DMD a_dmd(&snap.mat, dTimeStep);
@@ -820,42 +821,44 @@ PetscErrorCode readOpts(PetscReal &dT, PetscInt &max_iter_total,
 	return ierr;
 }
 
+/* ----Setting up the snapshot matrix in a Row-Major form---- */
 PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
 	PetscErrorCode ierr;
 	PetscBool flg;
 
-	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-svd_ncv", &snap.iNumCols, &flg);CHKERRQ(ierr);
+	ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-svd_ncv", &snap.iNumRows, &flg);CHKERRQ(ierr);
 		if (!flg){
 			PetscErrorPrintf("Missing -svd_ncv flag!\n");
 			exit(2);
 		}
 
 	// Getting the number of rows of each snapshot data
-	ierr = VecGetSize(vec, &snap.iNumRows);CHKERRQ(ierr);
+	ierr = VecGetSize(vec, &snap.iNumCols);CHKERRQ(ierr);
 
-	for (int i = 0; i < snap.iNumRows; i++) {
-		snap.row_index.push_back(i);
+	for (int i = 0; i < snap.iNumCols; i++) {
+		snap.col_index.push_back(i);
 		snap.vValues.push_back(0.0);
 	}
 
-	snap.last_column_index.push_back(snap.iNumCols - 1);
+	snap.last_row_index.push_back(snap.iNumRows - 1);
 
-	for (int j = snap.iNumCols - 1; j > 0; j--) {
-		snap.old_column_indices.push_back(j);
-		snap.new_column_indices.push_back(j - 1);
+	for (int j = snap.iNumRows - 1; j > 0; j--) {
+		snap.old_row_indices.push_back(j);
+		snap.new_row_indices.push_back(j - 1);
 		assert(((j-1)>=0) && "index for updating PCA matrix is out of range");
 	}
 
-	for (int j = 0; j < snap.iNumCols; j++) {
-		snap.column_indices.push_back(j);
-		for (int i = 0; i < snap.iNumRows; i++) {
+	for (int j = 0; j < snap.iNumRows; j++) {
+		snap.row_indices.push_back(j);
+		for (int i = 0; i < snap.iNumCols; i++) {
 			snap.mValues.push_back(0.0);
 		}
 	}
 
-	//getting the serialized data from the solution vector
-	ierr = VecGetValues(vec, snap.iNumRows, snap.row_index.data(), snap.vValues.data());CHKERRQ(ierr);
+	// getting the flattened data from the solution vector
+	ierr = VecGetValues(vec, snap.iNumCols, snap.col_index.data(), snap.vValues.data());CHKERRQ(ierr);
 
+	// Setting up the each solution in each row (short-fat matrix instead of tall-skinny)
 	ierr = MatDestroy(&snap.mat);	CHKERRQ(ierr);
 	ierr = MatCreate(MPI_COMM_WORLD, &snap.mat);	CHKERRQ(ierr);
 	ierr = MatSetSizes(snap.mat, PETSC_DECIDE, PETSC_DECIDE, snap.iNumRows,snap.iNumCols);	CHKERRQ(ierr);
@@ -863,8 +866,8 @@ PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
 	ierr = MatSetUp(snap.mat);	CHKERRQ(ierr);
 
 	 //setting the last column of the snapshots matrix
-	ierr = MatSetValues(snap.mat, snap.iNumRows, snap.row_index.data(),
-			1, snap.last_column_index.data(), snap.vValues.data(),
+	ierr = MatSetValues(snap.mat, 1, snap.last_row_index.data(),
+			snap.iNumCols, snap.col_index.data(), snap.vValues.data(),
 			INSERT_VALUES);CHKERRQ(ierr);
 
 	ierr = MatAssemblyBegin(snap.mat, MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
@@ -873,24 +876,26 @@ PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
 	return ierr;
 }
 
-
+/*  * Updating the snapshot matrix by inserting new rows (short-fat matrix)
+ * This is a row-major dataset, each solution vector is defined in each row
+ */
 PetscErrorCode updateSolutionMatrix(Vec& vec, _snapshots_type& snap) {
 	PetscErrorCode ierr;
 
-	ierr = MatGetValues(snap.mat, snap.iNumRows, snap.row_index.data(),
-			snap.iNumCols - 1, snap.old_column_indices.data(),
+	ierr = MatGetValues(snap.mat, snap.iNumRows - 1, snap.old_row_indices.data(),
+			snap.iNumCols, snap.col_index.data(),
 			snap.mValues.data()); CHKERRQ(ierr);
 
-	ierr = MatSetValues(snap.mat, snap.iNumRows, snap.row_index.data(),
-			snap.iNumCols - 1, snap.new_column_indices.data(),
+	ierr = MatSetValues(snap.mat, snap.iNumRows - 1, snap.new_row_indices.data(),
+			snap.iNumCols, snap.col_index.data(),
 			snap.mValues.data(), INSERT_VALUES); CHKERRQ(ierr);
 
 	//getting the serialized data from the solution vector
-	ierr = VecGetValues(vec, snap.iNumRows, snap.row_index.data(), snap.vValues.data()); CHKERRQ(ierr);
+	ierr = VecGetValues(vec, snap.iNumCols, snap.col_index.data(), snap.vValues.data()); CHKERRQ(ierr);
 
 	/* Setting the last column of the snapshots Matrix */
-	ierr = MatSetValues(snap.mat, snap.iNumRows, snap.row_index.data(),
-			1, snap.last_column_index.data(), snap.vValues.data(),
+	ierr = MatSetValues(snap.mat, 1, snap.last_row_index.data(),
+			snap.iNumCols, snap.col_index.data(), snap.vValues.data(),
 			INSERT_VALUES); CHKERRQ(ierr);
 
 	ierr = MatAssemblyBegin(snap.mat, MAT_FINAL_ASSEMBLY); CHKERRQ(ierr);
