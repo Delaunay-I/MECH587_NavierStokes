@@ -89,7 +89,6 @@ DMD::~DMD() {
 	PetscFree(row_index);
 	MatDestroy(&X1);
 	MatDestroy(&X2);
-	MatDestroy(&X2_tilde);
 	MatDestroy(&lrSVD.Ur);
 	MatDestroy(&lrSVD.Sr);
 	MatDestroy(&lrSVD.Vr);
@@ -177,7 +176,7 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	auto start = std::chrono::steady_clock::now();
 
 	ierr = solveSVD(svd, X1); CHKERRQ(ierr);
-	std::string sMessage = "DMD - SVD time";
+	std::string sMessage = "DMD::regression() - SVD time";
 	recordTime(start, sMessage);
 
 	// Compute the proper rank if requested
@@ -216,6 +215,12 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	} else {
 		ierr = calcDominantModePeriod(Atilde); CHKERRQ(ierr);
 	}
+
+	/* Computing the norm of the DMD approximation */
+	start = std::chrono::steady_clock::now();
+	ierr = calcUpdateNorm(lrSVD, Atilde, X1, X2); CHKERRQ(ierr);
+	sMessage = "DMD::regression() - Computing norm";
+	recordTime(start, sMessage);
 
 	return ierr;
 }
@@ -326,10 +331,6 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 	PetscErrorCode ierr;
 	Mat Ir{}, lhs{}, Gtilde{};
 
-	ierr = calcUpdateNorm(lrSVD, Atilde, X1, X2); CHKERRQ(ierr);
-	assert(X2_tilde != PETSC_NULL
-			&& "X2_tilde isn't defined. Have you computed the norm? (X2_tilde is computed inside that function)");
-
 	ierr = MatDuplicate(Atilde, MAT_COPY_VALUES, &Ir);
 	CHKERRQ(ierr);
 	ierr = MatDuplicate(Atilde, MAT_COPY_VALUES, &lhs);
@@ -376,17 +377,20 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 #endif
 
 	Mat UrGt{};
-	Vec X2_end_tilde{};
+	Vec X2_end{}, X2_end_tilde{};
 	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &update); CHKERRQ(ierr);
+	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &X2_end); CHKERRQ(ierr);
 	ierr = VecCreateSeq(PETSC_COMM_SELF, svdRank, &X2_end_tilde); CHKERRQ(ierr);
 
 	auto start = std::chrono::steady_clock::now();
-	ierr = MatGetColumnVector(X2_tilde, X2_end_tilde, X.num_cols - 2); CHKERRQ(ierr);
+	ierr = MatGetColumnVector(X2, X2_end, X.num_cols - 2); CHKERRQ(ierr);
+	// X2_end_tilde = Ur^T * X2[:, -1]
+	ierr = MatMultTranspose(lrSVD.Ur, X2_end, X2_end_tilde); CHKERRQ(ierr);
 	// UrGt = Ur * Gtilde
 	ierr = MatMatMult(lrSVD.Ur, Gtilde, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &UrGt); CHKERRQ(ierr);
-	// UrGt * X2_end_tilde
+	// update = UrGt * X2_end_tilde
 	ierr = MatMult(UrGt, X2_end_tilde, update);
-	std::string sMessage = "DMD - computing the update (matrix mult.) time";
+	std::string sMessage = "DMD::computeMatTransUpdate() - computing the update (matrix mult.) time";
 	recordTime(start, sMessage);
 
 	ierr = MatDestroy(&Ir); CHKERRQ(ierr);
@@ -440,19 +444,19 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 
 	auto start = std::chrono::steady_clock::now();
 	ierr = prepareData();CHKERRQ(ierr);
-	std::string sMessage = "DMD - Splitting the snapshots time";
+	std::string sMessage = "DMD::prepareData() - Splitting the snapshots time";
 	recordTime(start, sMessage);
 
 	start = std::chrono::steady_clock::now();
 	ierr = regression();CHKERRQ(ierr);
-	sMessage = "DMD - SVD and computing the best-fit time:";
+	sMessage = "DMD::regression() - SVD and computing the best-fit time:";
 	recordTime(start, sMessage);
 
 //	ierr = calcDMDmodes();CHKERRQ(ierr);
 
 	start = std::chrono::steady_clock::now();
 	ierr = computeMatTransUpdate();CHKERRQ(ierr);
-	sMessage = "DMD - computeMatTransUpdate() time:";
+	sMessage = "DMD::computeMatTransUpdate() - computeMatTransUpdate() time:";
 	recordTime(start, sMessage);
 
 	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
@@ -702,20 +706,18 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 	PetscErrorCode ierr;
 	// Computing the norm of our truncation, by taking everything to low-dimensional subspace
 	auto start = std::chrono::steady_clock::now();
-	Mat X2t_copy, X1_tilde;
-	ierr = MatTransposeMatMult(LowSVD.Ur, mX1, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X1_tilde); CHKERRQ(ierr);
-	ierr = MatMatMult(mAtilde, X1_tilde, MAT_REUSE_MATRIX, PETSC_DEFAULT, &X1_tilde); CHKERRQ(ierr);
-	ierr = MatTransposeMatMult(LowSVD.Ur, mX2, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2_tilde); CHKERRQ(ierr);
-	ierr = MatDuplicate(X2_tilde, MAT_COPY_VALUES, &X2t_copy); CHKERRQ(ierr);
-	ierr = MatAXPY(X2t_copy, -1, X1_tilde, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
+	Mat X1Copy, X2approx;
+	ierr = MatTransposeMatMult(LowSVD.Ur, mX1, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X1Copy); CHKERRQ(ierr);
+	ierr = MatMatMatMult(LowSVD.Ur, mAtilde, X1Copy, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2approx); CHKERRQ(ierr);
+	ierr = MatAYPX(X2approx, -1, mX2, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
 
-	ierr = MatNorm(X2t_copy, NORM_FROBENIUS, &dUpdateNorm); CHKERRQ(ierr);
+	ierr = MatNorm(X2approx, NORM_FROBENIUS, &dUpdateNorm); CHKERRQ(ierr);
 
 	std::string sMessage = "DMD - Computing the Norm time";
 	recordTime(start, sMessage);
 
-	ierr = MatDestroy(&X2t_copy); CHKERRQ(ierr);
-	ierr = MatDestroy(&X1_tilde); CHKERRQ(ierr);
+	ierr = MatDestroy(&X1Copy); CHKERRQ(ierr);
+	ierr = MatDestroy(&X2approx); CHKERRQ(ierr);
 
 	return ierr;
 }
