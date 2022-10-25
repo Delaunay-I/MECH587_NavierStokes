@@ -44,6 +44,7 @@ private:
 	PetscInt svdRank{}; //number of columns in SVD modes, also the truncation of SVD
 //	PetscInt iNumModes{}; // Outdated parameter - First need to fix calcDMDmodes() member function
 	PetscReal dt;
+	PetscReal iterNorm{-1}; // Norm of the current solution
 	PetscInt iOsclPeriod = 0; // Oscillation period of the dominant Mode
 	PetscReal dUpdateNorm{};
 	FILE* fLog;
@@ -79,19 +80,19 @@ private:
 
 public:
 
-	DMD(const Mat *Data, PetscReal DT);
+	DMD(const Mat *Data, PetscReal DT, PetscReal dNorm);
 	virtual ~DMD();
 	PetscErrorCode prepareData();
 
 	PetscErrorCode regression(bool dummyDMD = false);
 //	PetscErrorCode calcDMDmodes(); // does not include complex numbers - should be fixed!!
-	PetscErrorCode computeUpdate(PetscInt iMode);
-	PetscErrorCode computeMatTransUpdate();
+	PetscErrorCode computeMatUpdate();
 
-//	PetscErrorCode applyDMD(); Outdated parameter - First need to fix calcDMDmodes() member function
 	PetscErrorCode applyDMDMatTrans();
 	PetscErrorCode DummyDMD();
 
+//	PetscErrorCode computeUpdate(PetscInt iMode);
+//	PetscErrorCode applyDMD(); Outdated parameter - First need to fix calcDMDmodes() member function
 
 	Vec vgetUpdate() {
 		return update;

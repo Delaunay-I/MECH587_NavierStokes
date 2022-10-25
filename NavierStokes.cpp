@@ -15,8 +15,8 @@ struct _snapshots_type{
 	std::vector<PetscInt> col_index, row_indices;
 	std::vector<PetscInt> old_row_indices, new_row_indices;
 	std::vector<PetscInt> last_row_index; // REMOVE THIS
-	std::vector<PetscScalar> vValues; // REMOVE THIS
-	std::vector<PetscScalar> mValues; // REMOVE THIS //a placeholder for values - for updating svd results in SVD.mat
+	std::vector<PetscScalar> vValues; // Vec values
+	std::vector<PetscScalar> mValues; // Mat values
 	};
 
 
@@ -544,10 +544,6 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 				ierr = updateSolutionMatrix(vvGlobal, snap);
 				CHKERRQ(ierr);
 			}
-			if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
-				ierr = printVecMATLAB("FI", "FI", vvGlobal);
-				CHKERRQ(ierr);
-			}
 
 			if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
 
@@ -559,14 +555,14 @@ PetscErrorCode TimeAdvance(PetscInt &nDMD, PetscInt &numIters,
 				fclose(fLOG);
 
 				PetscReal dTimeStep = dT;
-				DMD a_dmd(&snap.mat, dTimeStep);
+				DMD a_dmd(&snap.mat, dTimeStep, MaxChange);
 
 				ierr = a_dmd.applyDMDMatTrans();
 				CHKERRQ(ierr);
 
 				Vec vUpdate { };
 				vUpdate = a_dmd.vgetUpdate();
-				ierr = printVecMATLAB("update", "vUpdate", vUpdate);
+//				ierr = printVecMATLAB("update", "vUpdate", vUpdate);
 				CHKERRQ(ierr);
 
 				for (int i = 1, index = 0; i <= IMAX; i++)
@@ -629,7 +625,7 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,
 
 		if (iter == iDummyDMDIter) {
 
-			DMD DMDTest(&snap.mat, dTimeStep);
+			DMD DMDTest(&snap.mat, dTimeStep, MaxChange);
 			ierr = DMDTest.DummyDMD(); CHKERRQ(ierr);
 			iSCP = DMDTest.iGetDominantPeriod();
 			ierr = PetscPrintf(PETSC_COMM_WORLD,
@@ -697,12 +693,12 @@ PetscErrorCode TimeAdvanceSmart(PetscInt &numIters, PetscInt *&dmdIter,
 			fprintf(fLOG, "iter: %i\n", iter);
 			fclose(fLOG);
 
-			DMD a_dmd(&snap.mat, dTimeStep);
+			DMD a_dmd(&snap.mat, dTimeStep, MaxChange);
 			ierr = a_dmd.applyDMDMatTrans(); CHKERRQ(ierr);
 
 			Vec vUpdate { };
 			vUpdate = a_dmd.vgetUpdate();
-			ierr = printVecMATLAB("update", "vUpdate", vUpdate);
+//			ierr = printVecMATLAB("update", "vUpdate", vUpdate);
 			CHKERRQ(ierr);
 
 			for (int i = 1, index = 0; i <= IMAX; i++)
@@ -832,7 +828,7 @@ PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
 			exit(2);
 		}
 
-	// Getting the number of rows of each snapshot data
+	// Getting the size of each snapshot data
 	ierr = VecGetSize(vec, &snap.iNumCols);CHKERRQ(ierr);
 
 	for (int i = 0; i < snap.iNumCols; i++) {

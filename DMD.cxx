@@ -9,8 +9,8 @@
 
 int DMD::isDMD_execs = 0;
 
-DMD::DMD(const Mat *svdMat, PetscReal DT) :
-	 dt(DT) {
+DMD::DMD(const Mat *svdMat, PetscReal DT, PetscReal dNorm) :
+	 dt(DT), iterNorm(dNorm) {
 
 	/* Opening a log file to write some results, to access after code execution */
 	fLog = fopen("Log.dat", "a");
@@ -176,7 +176,7 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	auto start = std::chrono::steady_clock::now();
 
 	ierr = solveSVD(svd, X1); CHKERRQ(ierr);
-	std::string sMessage = "DMD::regression() - SVD time";
+	std::string sMessage = "DMD::regression::SVD()";
 	recordTime(start, sMessage);
 
 	// Compute the proper rank if requested
@@ -193,17 +193,17 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	 */
 	ierr = PetscPrintf(PETSC_COMM_WORLD,
 					"computing the %i-rank-SVD-approximation of the snapshots matrix.\n", svdRank); CHKERRQ(ierr);
-		ierr = calcLowRankSVDApprox(svd, svdRank, lrSVD, "SnapshotsMat-LowRank");
+		ierr = calcLowRankSVDApprox(svd, svdRank, lrSVD, "LowRnk");
 		CHKERRQ(ierr);
 
 #ifdef DMD_CHECK_EIGS
 	if (!dummyDMD) {
 		Mat fullAtilde;
-		ierr = calcLowRankSVDApprox(svd, X.num_cols - 1, fullSVD, "SnapshotsMat-Full"); CHKERRQ(ierr);
+		ierr = calcLowRankSVDApprox(svd, X.num_cols - 1, fullSVD, "Full"); CHKERRQ(ierr);
 		/* Finds the FULL Atilde using all the columns (all the modes) */
 		ierr = calcBestFitlrSVD(fullSVD, fullAtilde); CHKERRQ(ierr);
 		/* Calculates the eigenvalues of the FULL Atilde */
-		ierr = calcEigenvalues(fullSVD, fullAtilde, "fullAtilde_eigenvalues"); CHKERRQ(ierr);
+		ierr = calcEigenvalues(fullSVD, fullAtilde, "FullAtilde"); CHKERRQ(ierr);
 		MatDestroy(&fullAtilde);
 	}
 #endif
@@ -211,123 +211,19 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	ierr = calcBestFitlrSVD(lrSVD, Atilde); CHKERRQ(ierr);
 	/* ------------ Eigen analysis of Atilde -------------*/
 	if (!dummyDMD) {
-		ierr = calcEigenvalues(lrSVD, Atilde, "LowRank-Eigenvalues", true); CHKERRQ(ierr);
+		ierr = calcEigenvalues(lrSVD, Atilde, "LowAtilde", true); CHKERRQ(ierr);
 	} else {
 		ierr = calcDominantModePeriod(Atilde); CHKERRQ(ierr);
 	}
 
 	/* Computing the norm of the DMD approximation */
-	start = std::chrono::steady_clock::now();
 	ierr = calcUpdateNorm(lrSVD, Atilde, X1, X2); CHKERRQ(ierr);
-	sMessage = "DMD::regression() - Computing norm";
-	recordTime(start, sMessage);
 
 	return ierr;
 }
 
 
-
-/*
- * This function does not consider complex numbers - SHOULD BE FIXED!!!
- */
-
-//PetscErrorCode DMD::calcDMDmodes(){
-//	PetscErrorCode ierr;
-//	Mat X2_Vr;
-//
-//	// Calculating Spatial modes
-//		ierr = MatMatMult(X2, lrSVD.Vr, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2_Vr); CHKERRQ(ierr);
-//		ierr = MatMatMatMult(X2_Vr, lrSVD.Sr_inv, lrSVD.W, MAT_INITIAL_MATRIX, PETSC_DEFAULT,
-//						&Phi); CHKERRQ(ierr);
-//
-//		ComplexSTLVec omega;
-//		for (size_t i = 0; i < lrSVD.eigs.size(); i++){
-//			ComplexNum complexEig = lrSVD.eigs[i];
-//			ComplexNum tmp2 = log(complexEig);
-//			assert(isfinite(std::real(tmp2)) && "Omega has infinite value!!\n\n");
-//			omega.push_back(tmp2/dt);
-//		}
-//
-//		std::ofstream fOMEGA_new;
-//		fOMEGA_new.open("Omega_new.dat");
-//		for(auto element: omega){
-//			fOMEGA_new << element << std::endl;
-//		}
-//		fOMEGA_new.close();
-//
-//	Vec rhs, Soln; // rhs = x1, Soln = b
-//	KSP ksp;
-//	PC pc;
-//	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &rhs); CHKERRQ(ierr);
-//	ierr = VecCreateSeq(PETSC_COMM_SELF, svdRank, &Soln); CHKERRQ(ierr);
-//	ierr = MatGetColumnVector(*X.mat, rhs, 0); CHKERRQ(ierr);
-//
-//#ifdef DEBUG_DMD
-//	ierr = printVecMATLAB(DEB_MAT_DIR + "x1", "x1", rhs); CHKERRQ(ierr);
-//	ierr = printVecMATLAB(DEB_MAT_DIR + "b", "b", Soln); CHKERRQ(ierr);
-//
-//#endif
-//	ierr = KSPCreate(PETSC_COMM_WORLD, &ksp); CHKERRQ(ierr);
-//
-//	ierr = KSPSetOperators(ksp, Phi, Phi); CHKERRQ(ierr);
-//	ierr = KSPSetType(ksp, KSPLSQR); CHKERRQ(ierr);
-//	ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
-//	ierr = PCSetType(pc, PCNONE); CHKERRQ(ierr);
-//	ierr = KSPSetTolerances(ksp,1.e-7,PETSC_DEFAULT,PETSC_DEFAULT,PETSC_DEFAULT);CHKERRQ(ierr);
-//
-//	//ierr = KSPSetFromOptions(ksp); CHKERRQ(ierr);
-//
-//	ierr = KSPSolve(ksp, rhs, Soln); CHKERRQ(ierr);
-////	ierr = KSPView(ksp,PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
-//
-//#ifdef DEBUG_DMD
-//	/*
-//	 * The Solution of the least squares (b) is related to the eigenvectors and
-//	 * the fact that we are not including imaginery parts in the KSP solver
-//	 * So the results are diffferent from Python and MATLAB
-//	 */
-//	ierr = printVecMATLAB(DEB_MAT_DIR + "b", "b", Soln); CHKERRQ(ierr);
-//#endif
-//
-//	ierr = MatCreate(MPI_COMM_WORLD, &time_dynamics);	CHKERRQ(ierr);
-//	ierr = MatSetSizes(time_dynamics, PETSC_DECIDE, PETSC_DECIDE, X.num_cols,
-//			svdRank);	CHKERRQ(ierr);
-//	ierr = MatSetType(time_dynamics, MATAIJ); CHKERRQ(ierr);
-//	ierr = MatSetUp(time_dynamics);	CHKERRQ(ierr);
-//
-//	PetscReal t = 0;
-//	for (int iter = 0; iter < X.num_cols; iter++) {
-//		for (int mode = 0; mode < svdRank; mode++) {
-//			PetscScalar bVal;
-//			ierr = VecGetValues(Soln, 1, &mode, &bVal); CHKERRQ(ierr);
-////			PetscScalar value = std::real(bVal*exp(omega[mode]*t));
-////
-////			ierr = MatSetValue(time_dynamics_old, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
-//
-//			PetscScalar value = std::real(bVal*exp(omega[mode]*t));
-//			ierr = MatSetValue(time_dynamics, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
-//
-//		}
-//		t += dt;
-//	}
-//	ierr = MatAssemblyBegin(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//	ierr = MatAssemblyEnd(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//	ierr = MatAssemblyBegin(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//	ierr = MatAssemblyEnd(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//
-//#ifdef DEBUG_DMD
-//	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics_old", "TD", time_dynamics_old); CHKERRQ(ierr);
-//	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics", "TD", time_dynamics); CHKERRQ(ierr);
-//#endif
-//
-//	ierr = MatDestroy(&X2_Vr); CHKERRQ(ierr);
-//	ierr = VecDestroy(&rhs); CHKERRQ(ierr);
-//	ierr = VecDestroy(&Soln); CHKERRQ(ierr);
-//	ierr = KSPDestroy(&ksp); CHKERRQ(ierr);
-//	return ierr;
-//}
-
-PetscErrorCode DMD::computeMatTransUpdate() {
+PetscErrorCode DMD::computeMatUpdate() {
 	PetscErrorCode ierr;
 	Mat Ir{}, lhs{}, Gtilde{};
 
@@ -382,7 +278,6 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &X2_end); CHKERRQ(ierr);
 	ierr = VecCreateSeq(PETSC_COMM_SELF, svdRank, &X2_end_tilde); CHKERRQ(ierr);
 
-	auto start = std::chrono::steady_clock::now();
 	ierr = MatGetColumnVector(X2, X2_end, X.num_cols - 2); CHKERRQ(ierr);
 	// X2_end_tilde = Ur^T * X2[:, -1]
 	ierr = MatMultTranspose(lrSVD.Ur, X2_end, X2_end_tilde); CHKERRQ(ierr);
@@ -390,8 +285,7 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 	ierr = MatMatMult(lrSVD.Ur, Gtilde, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &UrGt); CHKERRQ(ierr);
 	// update = UrGt * X2_end_tilde
 	ierr = MatMult(UrGt, X2_end_tilde, update);
-	std::string sMessage = "DMD::computeMatTransUpdate() - computing the update (matrix mult.) time";
-	recordTime(start, sMessage);
+
 
 	ierr = MatDestroy(&Ir); CHKERRQ(ierr);
 	ierr = MatDestroy(&lhs); CHKERRQ(ierr);
@@ -402,41 +296,6 @@ PetscErrorCode DMD::computeMatTransUpdate() {
 	return ierr;
 }
 
-PetscErrorCode DMD::computeUpdate(PetscInt iMode){
-	PetscErrorCode ierr;
-	PetscScalar TDend, slope, conv_sum;
-
-	assert(iMode < svdRank
-			&& "Requesting a mode that does not exist!! Did you set -dmd_rank correctly?");
-	slope = std::real(lrSVD.eigs[iMode]);
-
-	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &update); CHKERRQ(ierr);
-
-	ierr = MatGetValue(time_dynamics, X.num_cols - 1, iMode, &TDend); CHKERRQ(ierr);
-	conv_sum = slope * TDend / (1 - slope);
-
-	ierr = MatGetColumnVector(Phi, update, iMode); CHKERRQ(ierr);
-	ierr = VecScale(update, conv_sum); CHKERRQ(ierr);
-
-	return ierr;
-}
-
-//PetscErrorCode DMD::applyDMD(){
-//	PetscErrorCode ierr;
-//
-//	ierr = prepareData();CHKERRQ(ierr);
-//	ierr = regression();CHKERRQ(ierr);
-//	ierr = calcDMDmodes();CHKERRQ(ierr);
-//
-//	for(int i = 0; i < iNumModes; i++){
-//		ierr = computeUpdate(i);CHKERRQ(ierr);
-//	}
-//
-//	/* counting the number of calls to this class */
-//	isDMD_execs++;
-//	return ierr;
-//}
-
 PetscErrorCode DMD::applyDMDMatTrans() {
 	PetscErrorCode ierr;
 
@@ -444,19 +303,19 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 
 	auto start = std::chrono::steady_clock::now();
 	ierr = prepareData();CHKERRQ(ierr);
-	std::string sMessage = "DMD::prepareData() - Splitting the snapshots time";
+	std::string sMessage = "DMD::prepareData()";
 	recordTime(start, sMessage);
 
 	start = std::chrono::steady_clock::now();
 	ierr = regression();CHKERRQ(ierr);
-	sMessage = "DMD::regression() - SVD and computing the best-fit time:";
+	sMessage = "DMD::regression()";
 	recordTime(start, sMessage);
 
 //	ierr = calcDMDmodes();CHKERRQ(ierr);
 
 	start = std::chrono::steady_clock::now();
-	ierr = computeMatTransUpdate();CHKERRQ(ierr);
-	sMessage = "DMD::computeMatTransUpdate() - computeMatTransUpdate() time:";
+	ierr = computeMatUpdate();CHKERRQ(ierr);
+	sMessage = "DMD::computeMatTransUpdate()";
 	recordTime(start, sMessage);
 
 	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
@@ -469,7 +328,7 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 PetscErrorCode DMD::DummyDMD(){
 	PetscErrorCode ierr;
 	DMD::isDMD_execs = 0;
-	printMatMATLAB("DumData", "data", *X.mat);
+//	printMatMATLAB("DummyData", "data", *X.mat);
 
 	ierr = prepareData(); CHKERRQ(ierr);
 	ierr = regression(true); CHKERRQ(ierr);
@@ -608,7 +467,7 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 
 		/* Getting SVD modes column by column */
 	std::ofstream out;
-	out.open(sFileName + "-Sr_vec.dat");
+	out.open(DEB_TOOL_DIR + sFileName + "-Sr-n" + std::to_string(isDMD_execs) + ".dat");
 	PetscReal sig1, sig2, sigRate;
 
 	for (int j = 0; j < numCols; j++) {
@@ -705,16 +564,13 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 		const Mat &mX1, const Mat &mX2) {
 	PetscErrorCode ierr;
 	// Computing the norm of our truncation, by taking everything to low-dimensional subspace
-	auto start = std::chrono::steady_clock::now();
 	Mat X1Copy, X2approx;
 	ierr = MatTransposeMatMult(LowSVD.Ur, mX1, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X1Copy); CHKERRQ(ierr);
 	ierr = MatMatMatMult(LowSVD.Ur, mAtilde, X1Copy, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2approx); CHKERRQ(ierr);
 	ierr = MatAYPX(X2approx, -1, mX2, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
 
 	ierr = MatNorm(X2approx, NORM_FROBENIUS, &dUpdateNorm); CHKERRQ(ierr);
-
-	std::string sMessage = "DMD - Computing the Norm time";
-	recordTime(start, sMessage);
+	dUpdateNorm /= iterNorm;
 
 	ierr = MatDestroy(&X1Copy); CHKERRQ(ierr);
 	ierr = MatDestroy(&X2approx); CHKERRQ(ierr);
@@ -803,7 +659,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 #endif
 
 	FILE *fEigs;
-	std::string sName = DEB_TOOL_DIR + sFileName + "-TransMatrix.dat";
+	std::string sName = DEB_TOOL_DIR + sFileName + "-eigs_n" + std::to_string(isDMD_execs) + ".dat";
 	fEigs = fopen(sName.data(), "w");
 
 	ierr = PetscPrintf(PETSC_COMM_WORLD, "\nExtracting %s...\n", sFileName.c_str()); CHKERRQ(ierr);
@@ -1041,8 +897,146 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
 	auto stop =	std::chrono::steady_clock::now();
 	std::chrono::duration<double> duration = stop - start;
 //	std::printf("%s: %f [seconds]\n", sMessage.c_str(), duration.count());
-	fprintf(fLog, "%s: %f [seconds]\n", sMessage.c_str(), duration.count());
+	fprintf(fLog, "%s: %f [s]\n", sMessage.c_str(), duration.count());
 }
+
+
+
+/*
+ * This function does not consider complex numbers - SHOULD BE FIXED!!!
+ */
+
+//PetscErrorCode DMD::calcDMDmodes(){
+//	PetscErrorCode ierr;
+//	Mat X2_Vr;
+//
+//	// Calculating Spatial modes
+//		ierr = MatMatMult(X2, lrSVD.Vr, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2_Vr); CHKERRQ(ierr);
+//		ierr = MatMatMatMult(X2_Vr, lrSVD.Sr_inv, lrSVD.W, MAT_INITIAL_MATRIX, PETSC_DEFAULT,
+//						&Phi); CHKERRQ(ierr);
+//
+//		ComplexSTLVec omega;
+//		for (size_t i = 0; i < lrSVD.eigs.size(); i++){
+//			ComplexNum complexEig = lrSVD.eigs[i];
+//			ComplexNum tmp2 = log(complexEig);
+//			assert(isfinite(std::real(tmp2)) && "Omega has infinite value!!\n\n");
+//			omega.push_back(tmp2/dt);
+//		}
+//
+//		std::ofstream fOMEGA_new;
+//		fOMEGA_new.open("Omega_new.dat");
+//		for(auto element: omega){
+//			fOMEGA_new << element << std::endl;
+//		}
+//		fOMEGA_new.close();
+//
+//	Vec rhs, Soln; // rhs = x1, Soln = b
+//	KSP ksp;
+//	PC pc;
+//	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &rhs); CHKERRQ(ierr);
+//	ierr = VecCreateSeq(PETSC_COMM_SELF, svdRank, &Soln); CHKERRQ(ierr);
+//	ierr = MatGetColumnVector(*X.mat, rhs, 0); CHKERRQ(ierr);
+//
+//#ifdef DEBUG_DMD
+//	ierr = printVecMATLAB(DEB_MAT_DIR + "x1", "x1", rhs); CHKERRQ(ierr);
+//	ierr = printVecMATLAB(DEB_MAT_DIR + "b", "b", Soln); CHKERRQ(ierr);
+//
+//#endif
+//	ierr = KSPCreate(PETSC_COMM_WORLD, &ksp); CHKERRQ(ierr);
+//
+//	ierr = KSPSetOperators(ksp, Phi, Phi); CHKERRQ(ierr);
+//	ierr = KSPSetType(ksp, KSPLSQR); CHKERRQ(ierr);
+//	ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
+//	ierr = PCSetType(pc, PCNONE); CHKERRQ(ierr);
+//	ierr = KSPSetTolerances(ksp,1.e-7,PETSC_DEFAULT,PETSC_DEFAULT,PETSC_DEFAULT);CHKERRQ(ierr);
+//
+//	//ierr = KSPSetFromOptions(ksp); CHKERRQ(ierr);
+//
+//	ierr = KSPSolve(ksp, rhs, Soln); CHKERRQ(ierr);
+////	ierr = KSPView(ksp,PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
+//
+//#ifdef DEBUG_DMD
+//	/*
+//	 * The Solution of the least squares (b) is related to the eigenvectors and
+//	 * the fact that we are not including imaginery parts in the KSP solver
+//	 * So the results are diffferent from Python and MATLAB
+//	 */
+//	ierr = printVecMATLAB(DEB_MAT_DIR + "b", "b", Soln); CHKERRQ(ierr);
+//#endif
+//
+//	ierr = MatCreate(MPI_COMM_WORLD, &time_dynamics);	CHKERRQ(ierr);
+//	ierr = MatSetSizes(time_dynamics, PETSC_DECIDE, PETSC_DECIDE, X.num_cols,
+//			svdRank);	CHKERRQ(ierr);
+//	ierr = MatSetType(time_dynamics, MATAIJ); CHKERRQ(ierr);
+//	ierr = MatSetUp(time_dynamics);	CHKERRQ(ierr);
+//
+//	PetscReal t = 0;
+//	for (int iter = 0; iter < X.num_cols; iter++) {
+//		for (int mode = 0; mode < svdRank; mode++) {
+//			PetscScalar bVal;
+//			ierr = VecGetValues(Soln, 1, &mode, &bVal); CHKERRQ(ierr);
+////			PetscScalar value = std::real(bVal*exp(omega[mode]*t));
+////
+////			ierr = MatSetValue(time_dynamics_old, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
+//
+//			PetscScalar value = std::real(bVal*exp(omega[mode]*t));
+//			ierr = MatSetValue(time_dynamics, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
+//
+//		}
+//		t += dt;
+//	}
+//	ierr = MatAssemblyBegin(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
+//	ierr = MatAssemblyEnd(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
+//	ierr = MatAssemblyBegin(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
+//	ierr = MatAssemblyEnd(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
+//
+//#ifdef DEBUG_DMD
+//	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics_old", "TD", time_dynamics_old); CHKERRQ(ierr);
+//	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics", "TD", time_dynamics); CHKERRQ(ierr);
+//#endif
+//
+//	ierr = MatDestroy(&X2_Vr); CHKERRQ(ierr);
+//	ierr = VecDestroy(&rhs); CHKERRQ(ierr);
+//	ierr = VecDestroy(&Soln); CHKERRQ(ierr);
+//	ierr = KSPDestroy(&ksp); CHKERRQ(ierr);
+//	return ierr;
+//}
+
+// Deprecated
+//PetscErrorCode DMD::computeUpdate(PetscInt iMode){
+//	PetscErrorCode ierr;
+//	PetscScalar TDend, slope, conv_sum;
+//
+//	assert(iMode < svdRank
+//			&& "Requesting a mode that does not exist!! Did you set -dmd_rank correctly?");
+//	slope = std::real(lrSVD.eigs[iMode]);
+//
+//	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &update); CHKERRQ(ierr);
+//
+//	ierr = MatGetValue(time_dynamics, X.num_cols - 1, iMode, &TDend); CHKERRQ(ierr);
+//	conv_sum = slope * TDend / (1 - slope);
+//
+//	ierr = MatGetColumnVector(Phi, update, iMode); CHKERRQ(ierr);
+//	ierr = VecScale(update, conv_sum); CHKERRQ(ierr);
+//
+//	return ierr;
+//}
+
+//PetscErrorCode DMD::applyDMD(){
+//	PetscErrorCode ierr;
+//
+//	ierr = prepareData();CHKERRQ(ierr);
+//	ierr = regression();CHKERRQ(ierr);
+//	ierr = calcDMDmodes();CHKERRQ(ierr);
+//
+//	for(int i = 0; i < iNumModes; i++){
+//		ierr = computeUpdate(i);CHKERRQ(ierr);
+//	}
+//
+//	/* counting the number of calls to this class */
+//	isDMD_execs++;
+//	return ierr;
+//}
 
 
 
