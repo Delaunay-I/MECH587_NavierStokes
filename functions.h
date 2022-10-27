@@ -21,7 +21,7 @@ extern double dT;
 #define MAX_ITER 2500
 
 /* setting dimensions of the domain */
-#define Width 5.0
+#define Width 10.0
 #define Height 1.0
 
 #define dX (Width / IMAX)
@@ -92,7 +92,7 @@ void write_row2(FILE* file, const char* filename, double** array2d, double** arr
 void write_row_error(FILE* file, const char* filename, double** array2d, double** array2d2, double** exact, int imax, int jmax);
 void write_row_1d(FILE* file, const char* filename, double array1d[IMAX + 2][3], int l, int component);
 
-void get_l2norm(FILE* solution, int iter);
+double get_l2norm(FILE* solution, int iter);
 
 void write_tecplot(FILE* file, const char* filename, double*** array);
 void write_tecplot_diff(FILE* file, const char* filename, double*** array, double*** array2);
