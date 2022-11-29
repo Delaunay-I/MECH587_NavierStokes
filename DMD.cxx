@@ -219,6 +219,7 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	/* Computing the norm of the DMD approximation */
 	ierr = calcUpdateNorm(lrSVD, Atilde, X1, X2); CHKERRQ(ierr);
 
+	ierr = SVDDestroy(&svd); CHKERRQ(ierr);
 	return ierr;
 }
 
@@ -291,6 +292,7 @@ PetscErrorCode DMD::computeMatUpdate() {
 	ierr = MatDestroy(&lhs); CHKERRQ(ierr);
 	ierr = MatDestroy(&Gtilde); CHKERRQ(ierr);
 	ierr = MatDestroy(&UrGt); CHKERRQ(ierr);
+	ierr = VecDestroy(&X2_end); CHKERRQ(ierr);
 	ierr = VecDestroy(&X2_end_tilde); CHKERRQ(ierr);
 
 	return ierr;
@@ -318,7 +320,7 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 	sMessage = "DMD::computeMatTransUpdate()";
 	recordTime(start, sMessage);
 
-	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
+//	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
 
 	/* counting the number of calls to this class */
 	isDMD_execs++;
@@ -346,7 +348,7 @@ PetscErrorCode DMD::solveSVD(SVD& svd, Mat& mMatrix){
 	CHKERRQ(ierr);
 	ierr = SVDSetOperator(svd, mMatrix); // This function is changed to SVDSetOperators(SVD svd,Mat A,Mat B) in the new version of SLEPC.
 	CHKERRQ(ierr);
-	ierr = SVDSetType(svd, SVDLAPACK);
+	ierr = SVDSetType(svd, SVDLANCZOS);
 	CHKERRQ(ierr);
 	ierr = SVDSetWhichSingularTriplets(svd, SVD_LARGEST);
 	CHKERRQ(ierr);
@@ -569,8 +571,15 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 	ierr = MatMatMatMult(LowSVD.Ur, mAtilde, X1Copy, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2approx); CHKERRQ(ierr);
 	ierr = MatAYPX(X2approx, -1, mX2, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
 
-	ierr = MatNorm(X2approx, NORM_FROBENIUS, &dUpdateNorm); CHKERRQ(ierr);
-	dUpdateNorm /= iterNorm;
+	ierr = MatNorm(X2approx, NORM_FROBENIUS, &dFroNorm); CHKERRQ(ierr);
+	fprintf(fLog, "Frobenius norm:\t%e\n", dFroNorm);
+	dFroNorm /= iterNorm;
+	fprintf(fLog, "Frobenius norm (Normalized):\t%e\n", dFroNorm);
+
+	ierr = MatNorm(X2approx, NORM_1, &dInfNorm); CHKERRQ(ierr);
+	fprintf(fLog, "L1 norm:\t%e\n", dInfNorm);
+	dInfNorm /= iterNorm;
+	fprintf(fLog, "L1 norm (Normalized):\t%e\n", dInfNorm);
 
 	ierr = MatDestroy(&X1Copy); CHKERRQ(ierr);
 	ierr = MatDestroy(&X2approx); CHKERRQ(ierr);
@@ -831,13 +840,12 @@ PetscErrorCode DMD::printVecMATLAB(std::string sFileName,
 
 	std::string sName = sFileName + ".m";
 	PetscViewer viewer;
-	PetscObjectSetName((PetscObject) V, sVectorName.c_str());
-	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
-	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_MATLAB);
-	ierr = VecView(V, viewer);
-	CHKERRQ(ierr);
-	PetscViewerPopFormat(viewer);
-	PetscViewerDestroy(&viewer);
+	ierr = PetscObjectSetName((PetscObject) V, sVectorName.c_str()); CHKERRQ(ierr);
+	ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer); CHKERRQ(ierr);
+	ierr = PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_MATLAB); CHKERRQ(ierr);
+	ierr = VecView(V, viewer);	CHKERRQ(ierr);
+	ierr = PetscViewerPopFormat(viewer); CHKERRQ(ierr);
+	ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
 
 	return ierr;
 }
@@ -848,12 +856,12 @@ PetscErrorCode DMD::printMatMATLAB(std::string sFilename,
 
 	std::string sName = sFilename + ".m";
 	PetscViewer viewer;
-	PetscObjectSetName((PetscObject) A, sMatrixName.c_str());
-	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
-	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_MATLAB);
+	ierr = PetscObjectSetName((PetscObject) A, sMatrixName.c_str()); CHKERRQ(ierr);
+	ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer); CHKERRQ(ierr);
+	ierr = PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_MATLAB); CHKERRQ(ierr);
 	ierr = MatView(A, viewer);	CHKERRQ(ierr);
-	PetscViewerPopFormat(viewer);
-	PetscViewerDestroy(&viewer);
+	ierr = PetscViewerPopFormat(viewer); CHKERRQ(ierr);
+	ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
 
 	return ierr;
 }
@@ -864,13 +872,12 @@ PetscErrorCode DMD::printVecPYTHON(std::string sFileName,
 
 	std::string sName = sFileName + ".csv";
 	PetscViewer viewer;
-	PetscObjectSetName((PetscObject) V, sVectorName.c_str());
-	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
-	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_PYTHON);
-	ierr = VecView(V, viewer);
-	CHKERRQ(ierr);
-	PetscViewerPopFormat(viewer);
-	PetscViewerDestroy(&viewer);
+	ierr = PetscObjectSetName((PetscObject) V, sVectorName.c_str()); CHKERRQ(ierr);
+	ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer); CHKERRQ(ierr);
+	ierr = PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_PYTHON); CHKERRQ(ierr);
+	ierr = VecView(V, viewer);	CHKERRQ(ierr);
+	ierr = PetscViewerPopFormat(viewer); CHKERRQ(ierr);
+	ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
 
 	return ierr;
 }
@@ -881,23 +888,24 @@ PetscErrorCode DMD::printMatPYTHON(std::string sFilename,
 
 	std::string sName = sFilename + ".csv";
 	PetscViewer viewer;
-	PetscObjectSetName((PetscObject) A, sMatrixName.c_str());
-	PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer);
-	PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_PYTHON);
-	ierr = MatView(A, viewer);
-	CHKERRQ(ierr);
-	PetscViewerPopFormat(viewer);
-	PetscViewerDestroy(&viewer);
+	ierr = PetscObjectSetName((PetscObject) A, sMatrixName.c_str()); CHKERRQ(ierr);
+	ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, sName.c_str(), &viewer); CHKERRQ(ierr);
+	ierr = PetscViewerPushFormat(viewer, PETSC_VIEWER_ASCII_PYTHON); CHKERRQ(ierr);
+	ierr = MatView(A, viewer);	CHKERRQ(ierr);
+	ierr = PetscViewerPopFormat(viewer); CHKERRQ(ierr);
+	ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
 
 	return ierr;
 }
 
 void DMD::recordTime(std::chrono::steady_clock::time_point start,
 		std::string sMessage){
+#ifdef TIMING
 	auto stop =	std::chrono::steady_clock::now();
 	std::chrono::duration<double> duration = stop - start;
 //	std::printf("%s: %f [seconds]\n", sMessage.c_str(), duration.count());
 	fprintf(fLog, "%s: %f [s]\n", sMessage.c_str(), duration.count());
+#endif
 }
 
 

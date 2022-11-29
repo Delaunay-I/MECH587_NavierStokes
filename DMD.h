@@ -32,6 +32,9 @@
 //#define DMD_SIGMARATIO
 //#define CALC_CONDITION_NUMBER_OF_UPDATE
 //#define COMPLEX_NUMBER_PROBLEM
+#define TIMING
+#define CORETHRESH 0.85
+
 
 # define M_PIl          3.141592653589793238462643383279502884L /* pi */
 
@@ -46,7 +49,7 @@ private:
 	PetscReal dt;
 	PetscReal iterNorm{-1}; // Norm of the current solution
 	PetscInt iOsclPeriod = 0; // Oscillation period of the dominant Mode
-	PetscReal dUpdateNorm{};
+	PetscReal dFroNorm{}, dInfNorm{};
 	FILE* fLog;
 
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation

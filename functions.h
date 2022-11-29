@@ -21,7 +21,7 @@ extern double dT;
 #define MAX_ITER 2500
 
 /* setting dimensions of the domain */
-#define Width 10.0
+#define Width 5.0
 #define Height 1.0
 
 #define dX (Width / IMAX)
