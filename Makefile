@@ -1,12 +1,16 @@
 CC = mpic++
 
 # Compiler flags
-CFLAGS = -g -Wall #-v
+CFLAGS = -g -o0 -Wall -std=c++17 #-v
 LINKER_FLAGS = -Wl,–verbose
+
+SLEPC_DIR = /home/mirshahi/slepc
+PETSC_DIR = /home/mirshahi/petsc
 
 EXTRA_FLAGS = -lm -lblas -llapack -llapacke -lpetsc -lslepc
 INCLUDES = -I/$(SLEPC_DIR)/include -I/${SLEPC_DIR}/${PETSC_ARCH}/include \
--I/${PETSC_DIR}/include -I/${PETSC_DIR}/${PETSC_ARCH}/include 
+-I/${PETSC_DIR}/include -I/${PETSC_DIR}/${PETSC_ARCH}/include \
+-I/usr/include/eigen3/
 
 LIBS = -L/$(SLEPC_DIR)/lib  \
 -L/usr/lib \

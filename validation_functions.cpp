@@ -24,15 +24,15 @@ void exact_fluxIntegral(double*** FI) {
 			double S2y = sin(2 * PI * Y);
 
 			/* calculating the exact Flux Integral */
-			FI[i][j][0] = -(PI / Beta) * (u0 * Cx * S2y + v0 * S2x * Cy);
+			FI[i][j][0] = -(PI / Beta) * (u0 * Cx * S2y + my_v0 * S2x * Cy);
 
 			FI[i][j][1] = P0 * PI * Sx * Cy - u0 * u0 * PI * S2x * S2y * S2y
-				- u0 * v0 * PI * Sx * S2x * (Cy * S2y + 2 * C2y * Sy)
+				- u0 * my_v0 * PI * Sx * S2x * (Cy * S2y + 2 * C2y * Sy)
 				- (u0 * 5.0 * PI * PI * Sx * S2y) / Re;
 
-			FI[i][j][2] = P0 * PI * Cx * Sy - v0 * v0 * PI * S2x * S2x * S2y
-				- u0 * v0 * PI * Sy * S2y * (Cx * S2x + 2 * C2x * Sx)
-				- (v0 * 5.0 * PI * PI * S2x * Sy) / Re;
+			FI[i][j][2] = P0 * PI * Cx * Sy - my_v0 * my_v0 * PI * S2x * S2x * S2y
+				- u0 * my_v0 * PI * Sy * S2y * (Cx * S2x + 2 * C2x * Sx)
+				- (my_v0 * 5.0 * PI * PI * S2x * Sy) / Re;
 		}
 	}
 }

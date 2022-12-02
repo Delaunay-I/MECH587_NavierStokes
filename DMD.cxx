@@ -6,6 +6,9 @@
  */
 
 #include "DMD.h"
+Eigen::MatrixXd pMat_to_eMat_double(const Mat &pMat);
+Eigen::VectorXd pVec_to_eVec_double(const Vec &pVec);
+
 
 int DMD::isDMD_execs = 0;
 
@@ -95,7 +98,6 @@ DMD::~DMD() {
 	MatDestroy(&lrSVD.Sr_inv);
 	MatDestroy(&lrSVD.W);
 	MatDestroy(&Atilde);
-	MatDestroy(&Phi);
 	MatDestroy(&time_dynamics);
 	VecDestroy(&update);
 
@@ -160,8 +162,9 @@ PetscErrorCode DMD::prepareData(){
 	/* Make the matrices tall-skinny for compatibility with other functions */
 	ierr = MatTranspose(X1, MAT_INPLACE_MATRIX, &X1); CHKERRQ(ierr);
 	ierr = MatTranspose(X2, MAT_INPLACE_MATRIX, &X2); CHKERRQ(ierr);
-
-
+#ifdef DEBUG_DMD
+	ierr = printMatMATLAB("X1", "X1", X1); CHKERRQ(ierr);
+#endif
 	ierr = PetscFree(X1row_index); CHKERRQ(ierr);
 	ierr = PetscFree(X2row_index); CHKERRQ(ierr);
 	ierr = PetscFree(dTmpArr); CHKERRQ(ierr);
@@ -178,6 +181,8 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	ierr = solveSVD(svd, X1); CHKERRQ(ierr);
 	std::string sMessage = "DMD::regression::SVD()";
 	recordTime(start, sMessage);
+
+	ierr = testSVD(svd); CHKERRQ(ierr);
 
 	// Compute the proper rank if requested
 	if (flg_autoRankDMD) {
@@ -203,7 +208,7 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 		/* Finds the FULL Atilde using all the columns (all the modes) */
 		ierr = calcBestFitlrSVD(fullSVD, fullAtilde); CHKERRQ(ierr);
 		/* Calculates the eigenvalues of the FULL Atilde */
-		ierr = calcEigenvalues(fullSVD, fullAtilde, "FullAtilde"); CHKERRQ(ierr);
+//		ierr = calcEigenvalues(fullSVD, fullAtilde, "FullAtilde"); CHKERRQ(ierr);
 		MatDestroy(&fullAtilde);
 	}
 #endif
@@ -301,7 +306,7 @@ PetscErrorCode DMD::computeMatUpdate() {
 PetscErrorCode DMD::applyDMDMatTrans() {
 	PetscErrorCode ierr;
 
-	printMatMATLAB("data", "data", *X.mat);
+	printMatMATLAB("data" + std::to_string(isDMD_execs), "data", *X.mat);
 
 	auto start = std::chrono::steady_clock::now();
 	ierr = prepareData();CHKERRQ(ierr);
@@ -313,14 +318,12 @@ PetscErrorCode DMD::applyDMDMatTrans() {
 	sMessage = "DMD::regression()";
 	recordTime(start, sMessage);
 
-//	ierr = calcDMDmodes();CHKERRQ(ierr);
-
 	start = std::chrono::steady_clock::now();
 	ierr = computeMatUpdate();CHKERRQ(ierr);
 	sMessage = "DMD::computeMatTransUpdate()";
 	recordTime(start, sMessage);
 
-//	fprintf(fLog, "----Norm of our approximation: %e-----\n", dUpdateNorm);
+	ierr = calcDMDmodes();CHKERRQ(ierr);
 
 	/* counting the number of calls to this class */
 	isDMD_execs++;
@@ -346,15 +349,13 @@ PetscErrorCode DMD::solveSVD(SVD& svd, Mat& mMatrix){
 
 	ierr = SVDCreate(PETSC_COMM_WORLD, &svd);
 	CHKERRQ(ierr);
-	ierr = SVDSetOperator(svd, mMatrix); // This function is changed to SVDSetOperators(SVD svd,Mat A,Mat B) in the new version of SLEPC.
+	ierr = SVDSetOperators(svd, mMatrix, NULL); // This function is changed to SVDSetOperators(SVD svd,Mat A,Mat B) in the new version of SLEPC.
 	CHKERRQ(ierr);
 	ierr = SVDSetType(svd, SVDLANCZOS);
 	CHKERRQ(ierr);
 	ierr = SVDSetWhichSingularTriplets(svd, SVD_LARGEST);
 	CHKERRQ(ierr);
 	ierr = SVDSetDimensions(svd, nsv, PETSC_DEFAULT, PETSC_DEFAULT);
-	CHKERRQ(ierr);
-	ierr = SVDSetFromOptions(svd);
 	CHKERRQ(ierr);
 
 	ierr = PetscPrintf(PETSC_COMM_WORLD,
@@ -470,7 +471,7 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 		/* Getting SVD modes column by column */
 	std::ofstream out;
 	out.open(DEB_TOOL_DIR + sFileName + "-Sr-n" + std::to_string(isDMD_execs) + ".dat");
-	PetscReal sig1, sig2, sigRate;
+	PetscReal sigma1, sigLast, sig2, sigRate;
 
 	for (int j = 0; j < numCols; j++) {
 		PetscInt index = j;
@@ -478,13 +479,16 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 
 		if (j > 0 && j < numCols) {
 			sig2 = sigma;
-			sigRate = sig2 / sig1;
-			out << sigma << "\t" << sigRate << std::endl;
+			sigRate = sig2 / sigLast;
+			out << sigma << "\t" << sigRate;
+			sigRate = sig2 / sigma1;
+			out << "\t" << sigRate << std::endl;
 		}
 		if (j < numCols - 1) {
-			sig1 = sigma;
+			sigLast = sigma;
 			if (j == 0) {
-				out << sigma << "\t" << 0 << std::endl;
+				sigma1 = sigma;
+				out << sigma << "\t" << 0 << "\t" << 0  << std::endl;
 			}
 		}
 
@@ -522,9 +526,9 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 	out.close();
 
 #ifdef DEBUG_DMD
-	printMatPYTHON(DEB_TOOL_DIR + sFileName + "-Ur", "Ur", LowSVD.Ur);
+	printMatMATLAB(DEB_TOOL_DIR + sFileName + "-Ur", "Ur", LowSVD.Ur);
 	printMatMATLAB(DEB_TOOL_DIR + sFileName + "-Sr", "Sr", LowSVD.Sr);
-	printMatPYTHON(DEB_TOOL_DIR + sFileName + "-Vr", "Vr", LowSVD.Vr);
+	printMatMATLAB(DEB_TOOL_DIR + sFileName + "-Vr", "Vr", LowSVD.Vr);
 #endif
 
 	PetscFree(column_vec);
@@ -572,14 +576,8 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 	ierr = MatAYPX(X2approx, -1, mX2, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
 
 	ierr = MatNorm(X2approx, NORM_FROBENIUS, &dFroNorm); CHKERRQ(ierr);
-	fprintf(fLog, "Frobenius norm:\t%e\n", dFroNorm);
 	dFroNorm /= iterNorm;
 	fprintf(fLog, "Frobenius norm (Normalized):\t%e\n", dFroNorm);
-
-	ierr = MatNorm(X2approx, NORM_1, &dInfNorm); CHKERRQ(ierr);
-	fprintf(fLog, "L1 norm:\t%e\n", dInfNorm);
-	dInfNorm /= iterNorm;
-	fprintf(fLog, "L1 norm (Normalized):\t%e\n", dInfNorm);
 
 	ierr = MatDestroy(&X1Copy); CHKERRQ(ierr);
 	ierr = MatDestroy(&X2approx); CHKERRQ(ierr);
@@ -608,8 +606,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	ierr = EPSSetType(eps, EPSLAPACK); CHKERRQ(ierr);
 	ierr = EPSSetWhichEigenpairs(eps, EPS_LARGEST_REAL); CHKERRQ(ierr);
 	ierr = EPSSetDimensions(eps, rank, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
-	ierr = EPSSetTolerances(eps, 1e-10, 10); CHKERRQ(ierr);
-	ierr = EPSSetFromOptions(eps); CHKERRQ(ierr);
+	ierr = EPSSetTolerances(eps, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
 
 	ierr = EPSSolve(eps);	CHKERRQ(ierr);
 	ierr = EPSGetConverged(eps, &nconv); CHKERRQ(ierr);
@@ -650,10 +647,10 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 
 	/* ------ Extracting eigenvalues --------- */
 	PetscScalar dReal, dImag, dError;
+	Vec vr, vi;
 
 	// For calcmodes
 #ifdef COMPLEX_NUMBER_PROBLEM
-	Vec vr, vi;
 	if (calcEigenvectors){
 		ierr = MatCreateVecs(matrix, NULL, &vr); CHKERRQ(ierr);
 		ierr = MatCreateVecs(matrix, NULL, &vi); CHKERRQ(ierr);
@@ -675,16 +672,15 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 
 	std::fprintf(fEigs, "VARIABLES = \"NUM\" \"sigma-Real\" \"sigma-Imag\" \"Rel. Error\" \"Eig-Real\""
 			"\"Eig-Imag\"\n");
+	LowSVD.emWsorted = Eigen::MatrixXcd::Zero(rank, rank);
+	LowSVD.eVLambdas = Eigen::VectorXcd::Zero(rank);
 
 	for (PetscInt i = 0; i < nconv; i++) {
 
-//		if (calcEigenvectors) {
-//			ierr = EPSGetEigenpair(eps, i, &dReal, &dImag, vr, vi);	CHKERRQ(ierr);
-//		} else {
-		// actually, amplification factor
-		ierr = EPSGetEigenvalue(eps, i, &dReal, &dImag);CHKERRQ(ierr);
+		ierr = EPSGetEigenpair(eps, i, &dReal, &dImag, vr, vi);	CHKERRQ(ierr);
 		ierr = EPSComputeError(eps, i, EPS_ERROR_RELATIVE, &dError);CHKERRQ(ierr);
 		LowSVD.eigs.push_back({dReal, dImag});
+		LowSVD.eVLambdas(i) = LowSVD.eigs.back();
 
 		// Computing omega - solutions eigenvalues
 		ComplexNum tmp2 = log(LowSVD.eigs[i]);
@@ -695,29 +691,21 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 
 		std::fprintf(fEigs, "%.2i\t%.12g\t%12g\t%.12g\t%.12g\t%.12g\t\n", i + 1,
 				dReal, dImag, dError, OmegaReal, OmegaImag);
+		for (int row = 0; row < rank; row++) {
+			PetscScalar dVecr;
+			ierr = VecGetValues(vr, 1, &row, &dVecr); CHKERRQ(ierr);
+			ierr = MatSetValue(LowSVD.W, row, i, dVecr, INSERT_VALUES);CHKERRQ(ierr);
+		}
+
+		Eigen::VectorXd evReal = pVec_to_eVec_double(vr);
+		Eigen::VectorXd evImag = pVec_to_eVec_double(vi);
+
+		LowSVD.emWsorted.col(i).real() << evReal;
+		LowSVD.emWsorted.col(i).imag() << evImag;
+
 
 #ifdef PRINT_EIGENVALUES
 		printf("eigen %i: %f %fi\n", i + 1, std::real(LowSVD.eigs[i]), std::imag(LowSVD.eigs[i]));
-#endif
-#ifdef COMPLEX_NUMBER_PROBLEM
-		PetscScalar dVecr, dVeci;
-
-		if (calcEigenvectors) {
-			for (int row = 0; row < rank; row++) {
-				/* Get values one-by-one and write them one at a time */
-				ierr = VecGetValues(vr, 1, &row, &dVecr);
-				CHKERRQ(ierr);
-				ierr = VecGetValues(vi, 1, &row, &dVeci);
-				CHKERRQ(ierr);
-				/* Setting the absolute value */
-//				value = std::sqrt(dVecr * dVecr + dVeci * dVeci);
-				/* Setting the real part */
-				ComplexNum cmpxValue(dVecr, dVeci);
-				PetscScalar value = cmpxValue;
-				ierr = MatSetValue(LowSVD.W, row, i, value, INSERT_VALUES);
-				CHKERRQ(ierr);
-			}
-		}
 #endif
 	}
 #ifdef COMPLEX_NUMBER_PROBLEM
@@ -725,19 +713,30 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 		ierr = MatAssemblyBegin(LowSVD.W, MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
 		ierr = MatAssemblyEnd(LowSVD.W, MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
 	}
-	ierr = printMatPYTHON("PHI", "PHI", LowSVD.W); CHKERRQ(ierr);
+	ierr = printMatPYTHON("petscEigenvectors", "eigenvectors", LowSVD.W); CHKERRQ(ierr);
+	ierr = printMatMATLAB("petscEigenvectors", "eigenvectors", LowSVD.W); CHKERRQ(ierr);
+
+	std::ofstream feEigenvalues("eEigenvalues.dat");
+	if (feEigenvalues.is_open()) {
+		feEigenvalues << LowSVD.eVLambdas << '\n';
+	}
+	feEigenvalues.close();
+	std::ofstream fWs("Ws.dat");
+	if (fWs.is_open()) {
+		fWs << LowSVD.emWsorted << '\n';
+	}
+	fWs.close();
+
 #endif
 
 	std::fprintf(fEigs, "\n");
 	std::fclose(fEigs);
 
+	ierr = testEPS(); CHKERRQ(ierr);
+
 	ierr = EPSDestroy(&eps);CHKERRQ(ierr);
-#ifdef COMPLEX_NUMBER_PROBLEM
-	if (calcEigenvectors){
-		ierr = VecDestroy(&vr); CHKERRQ(ierr);
-		ierr = VecDestroy(&vi); CHKERRQ(ierr);
-	}
-#endif
+	ierr = VecDestroy(&vr); CHKERRQ(ierr);
+	ierr = VecDestroy(&vi); CHKERRQ(ierr);
 
 	return ierr;
 }
@@ -914,30 +913,70 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
  * This function does not consider complex numbers - SHOULD BE FIXED!!!
  */
 
-//PetscErrorCode DMD::calcDMDmodes(){
-//	PetscErrorCode ierr;
-//	Mat X2_Vr;
-//
-//	// Calculating Spatial modes
-//		ierr = MatMatMult(X2, lrSVD.Vr, MAT_INITIAL_MATRIX, PETSC_DEFAULT, &X2_Vr); CHKERRQ(ierr);
-//		ierr = MatMatMatMult(X2_Vr, lrSVD.Sr_inv, lrSVD.W, MAT_INITIAL_MATRIX, PETSC_DEFAULT,
-//						&Phi); CHKERRQ(ierr);
-//
-//		ComplexSTLVec omega;
-//		for (size_t i = 0; i < lrSVD.eigs.size(); i++){
-//			ComplexNum complexEig = lrSVD.eigs[i];
-//			ComplexNum tmp2 = log(complexEig);
-//			assert(isfinite(std::real(tmp2)) && "Omega has infinite value!!\n\n");
-//			omega.push_back(tmp2/dt);
-//		}
-//
-//		std::ofstream fOMEGA_new;
-//		fOMEGA_new.open("Omega_new.dat");
-//		for(auto element: omega){
-//			fOMEGA_new << element << std::endl;
-//		}
-//		fOMEGA_new.close();
-//
+PetscErrorCode DMD::calcDMDmodes(){
+	PetscErrorCode ierr {};
+	Eigen::MatrixXd eX2, eVr, eAtilde, eSr_inv;
+
+	eX2 = pMat_to_eMat_double(X2);
+	eVr = pMat_to_eMat_double(lrSVD.Vr);
+	eAtilde = pMat_to_eMat_double(Atilde);
+	eSr_inv = pMat_to_eMat_double(lrSVD.Sr_inv);
+
+
+	ierr = printMatMATLAB("Atilde", "Atilde", Atilde); CHKERRQ(ierr);
+
+	Eigen::EigenSolver<Eigen::MatrixXd> eigenSystem;
+	eigenSystem.compute(eAtilde);
+	Eigen::VectorXcd eivals = eigenSystem.eigenvalues();
+	Eigen::MatrixXcd eW = eigenSystem.eigenvectors();
+
+	std::ofstream fEig("eigen3Eigenvalues.dat");
+	if (fEig.is_open()) {
+		fEig << eivals << '\n';
+	}
+	fEig.close();
+
+	std::ofstream fWsorted("eigen3W.dat");
+	if (fWsorted.is_open()) {
+		fWsorted << eW << '\n';
+	}
+	fWsorted.close();
+
+	std::printf("\nTesting the result of eigen solver (Eigen3)...\n");
+	std::printf("\tTesting if Aw = wL\n");
+	for (int i = 0; i < eivals.size(); i++) {
+		double epsError =  (eAtilde * eW.col(i) - eW.col(i) * eivals(i)).norm();
+		if (epsError > 1e-16){
+			std::cout << i << " eigenvector error: "<< epsError << std::endl;
+		}
+	}
+
+	// Computing the DMD modes
+	epsPhi = eX2 * eVr * eSr_inv * lrSVD.emWsorted;
+	eigenPhi = eX2 * eVr * eSr_inv * eW;
+
+	{
+		std::ofstream fPhi("Phi.dat");
+		if (fPhi.is_open()) {
+			fPhi << eigenPhi.real() << '\n';
+		}
+		fPhi.close();
+
+		std::ofstream fEig("eigs.dat");
+		if (fEig.is_open()) {
+			fEig << eigenSystem.eigenvalues() << '\n';
+		}
+		fEig.close();
+
+		lrSVD.evOmega = (eigenSystem.eigenvalues()).array().log();
+		lrSVD.evOmega /= dt;
+		std::ofstream fOmega("Omega.txt");
+		if (fOmega.is_open()) {
+			fOmega << lrSVD.evOmega << '\n';
+		}
+		fOmega.close();
+	}
+
 //	Vec rhs, Soln; // rhs = x1, Soln = b
 //	KSP ksp;
 //	PC pc;
@@ -993,8 +1032,8 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
 //		}
 //		t += dt;
 //	}
-//	ierr = MatAssemblyBegin(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//	ierr = MatAssemblyEnd(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
+////	ierr = MatAssemblyBegin(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
+////	ierr = MatAssemblyEnd(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 //	ierr = MatAssemblyBegin(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 //	ierr = MatAssemblyEnd(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 //
@@ -1007,8 +1046,66 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
 //	ierr = VecDestroy(&rhs); CHKERRQ(ierr);
 //	ierr = VecDestroy(&Soln); CHKERRQ(ierr);
 //	ierr = KSPDestroy(&ksp); CHKERRQ(ierr);
-//	return ierr;
-//}
+	return ierr;
+}
+
+PetscErrorCode DMD::dotwDMDmodes(const Vec& pVec, int numMode, bool Eigen3){
+	PetscErrorCode ierr = 0;
+	Eigen::VectorXd eVec = pVec_to_eVec_double(pVec);
+
+	if (Eigen3) {
+	assert((eVec.size() == eigenPhi.col(numMode).size()) && "the vectors are not the same size for taking dot product!\n\n");
+	double dotMode = eVec.dot(eigenPhi.col(numMode).real());
+	std::printf("dot with eigen3 mode (unsorted) %d:\t %f\n", numMode, dotMode);
+	} else {
+	assert((eVec.size() == epsPhi.col(numMode).size()) && "the vectors are not the same size for taking dot product!\n\n");
+	double dotMode = eVec.dot(epsPhi.col(numMode).real());
+	std::printf("dot with EPS mode (unsorted) %d:\t %f\n", numMode, dotMode);
+	}
+
+	return ierr;
+}
+
+Eigen::MatrixXd pMat_to_eMat_double(const Mat &pMat){
+	PetscInt nRows{0}, nCols{0};
+	std::vector<double> matElements;
+	std::vector<int> col_index, row_index;
+
+	Mat B;
+	MatTranspose(pMat, MAT_INITIAL_MATRIX, &B);
+	MatGetSize(B, &nRows, &nCols);
+
+	for (int i = 0; i < nCols; i++) {
+		col_index.push_back(i);
+	}
+	for (int j = 0; j < nRows; j++) {
+			row_index.push_back(j);
+			for (int i = 0; i < nCols; i++) {
+				matElements.push_back(0.0);
+			}
+		}
+	MatGetValues(B, nRows, row_index.data(), nCols, col_index.data(), matElements.data());
+	Eigen::Map<Eigen::MatrixXd> eMat(matElements.data(), nCols, nRows);
+
+	return eMat;
+}
+
+Eigen::VectorXd pVec_to_eVec_double(const Vec &pVec){
+	PetscInt nVals{};
+	VecGetSize(pVec, &nVals);
+	std::vector<PetscInt> index;
+	std::vector<double> vValues;
+
+	for (int i = 0; i < nVals; i++) {
+		index.push_back(i);
+		vValues.push_back(0.0);
+	}
+
+	VecGetValues(pVec, nVals, index.data(), vValues.data());
+	Eigen::Map<Eigen::VectorXd> eVec(vValues.data(), nVals);
+
+	return eVec;
+}
 
 // Deprecated
 //PetscErrorCode DMD::computeUpdate(PetscInt iMode){
@@ -1046,5 +1143,173 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
 //	return ierr;
 //}
 
+PetscErrorCode DMD::testEPS(){
+	PetscErrorCode ierr = 0;
+	Eigen::MatrixXd eAtilde;
+
+	eAtilde = pMat_to_eMat_double(Atilde);
+
+	std::cout << "EPS eigenvalues" << lrSVD.eVLambdas << std::endl;
+
+	std::printf("\nTesting the result of EPS (SLEPc)...\n");
+	std::printf("\tTesting if Aw = wL\n");
+	for (int i = 0; i < lrSVD.eVLambdas.size(); i++) {
+		double epsError =  (eAtilde * lrSVD.emWsorted.col(i) - lrSVD.emWsorted.col(i) * lrSVD.eVLambdas(i)).norm();
+		if (epsError > 1e-16){
+			std::cout << i << " eigenvector error: "<< epsError << std::endl;
+		}
+	}
+	return ierr;
+}
+
+PetscErrorCode DMD::testSVD(SVD& svd) {
+	PetscErrorCode ierr;
+	Vec u1, v1, u2, v2;
+	PetscReal sigma1, sigma2;
+	PetscScalar temp1, temp2;
+	std::vector < PetscInt > index;
+	std::vector<PetscScalar> column_vec, row_vec;
+	Mat U, Vstar, SIGMA, USV;
+
+	int cols{X.num_cols - 1}, rows{X.num_rows};
+	PetscInt *VrCol_index;
+
+	ierr = PetscMalloc1(cols, &VrCol_index);
+
+	for (int i = 0; i < cols; i++){
+		VrCol_index[i] = i;
+	}
+
+	ierr = MatCreateVecs(X1, &v1, &u1);
+	CHKERRQ(ierr);
+	ierr = MatCreateVecs(X1, &v2, &u2);
+	CHKERRQ(ierr);
+	index.push_back(0);
+	for (int j = 0; j < cols; j++) {
+		column_vec.push_back(0.0);
+	}
+	for (int i = 0; i < rows; i++) {
+		row_vec.push_back(0.0);
+	}
+
+	ierr = MatCreate(MPI_COMM_SELF, &U);
+	CHKERRQ(ierr);
+	ierr = MatSetSizes(U, PETSC_DECIDE, PETSC_DECIDE, rows,
+			cols);
+	CHKERRQ(ierr);
+	ierr = MatSetType(U, MATAIJ); // I am not sure about the matrix type rn.
+	CHKERRQ(ierr);
+	ierr = MatSetUp(U);
+	CHKERRQ(ierr);
+
+	ierr = MatCreate(MPI_COMM_SELF, &Vstar);
+	CHKERRQ(ierr);
+	ierr = MatSetSizes(Vstar, PETSC_DECIDE, PETSC_DECIDE, cols,
+			cols);
+	CHKERRQ(ierr);
+	ierr = MatSetType(Vstar, MATAIJ); // I am not sure about the matrix type rn.
+	CHKERRQ(ierr);
+	ierr = MatSetUp(Vstar);
+	CHKERRQ(ierr);
+
+	ierr = MatCreate(MPI_COMM_SELF, &SIGMA);
+	CHKERRQ(ierr);
+	ierr = MatSetSizes(SIGMA, PETSC_DECIDE, PETSC_DECIDE, cols,
+			cols);
+	CHKERRQ(ierr);
+	ierr = MatSetType(SIGMA, MATAIJ); // I am not sure about the matrix type rn.
+	CHKERRQ(ierr);
+	ierr = MatSetUp(SIGMA);
+	CHKERRQ(ierr);
+
+	ierr = MatZeroEntries(SIGMA);
+	CHKERRQ(ierr);
+	for (int j = 0; j < cols; j++) {
+		index[0] = j;
+
+		ierr = SVDGetSingularTriplet(svd, j, &sigma1, u1, v1);CHKERRQ(ierr);
+
+		ierr = VecGetValues(u1, rows, row_index,row_vec.data());CHKERRQ(ierr);
+		ierr = VecGetValues(v1, cols, VrCol_index,column_vec.data());CHKERRQ(ierr);
+		ierr = MatSetValue(SIGMA, j, j, sigma1, INSERT_VALUES);	CHKERRQ(ierr);
+
+		ierr = MatSetValues(U, rows, row_index, 1,index.data(), row_vec.data(), INSERT_VALUES);CHKERRQ(ierr);
+		ierr = MatSetValues(Vstar, 1, index.data(), cols,VrCol_index, column_vec.data(), INSERT_VALUES);CHKERRQ(ierr);
+	}
+
+	ierr = MatAssemblyBegin(U, MAT_FINAL_ASSEMBLY);
+	CHKERRQ(ierr);
+	ierr = MatAssemblyEnd(U, MAT_FINAL_ASSEMBLY);
+	CHKERRQ(ierr);
+	ierr = MatAssemblyBegin(Vstar, MAT_FINAL_ASSEMBLY);
+	CHKERRQ(ierr);
+	ierr = MatAssemblyEnd(Vstar, MAT_FINAL_ASSEMBLY);
+	CHKERRQ(ierr);
+	ierr = MatAssemblyBegin(SIGMA, MAT_FINAL_ASSEMBLY);
+	CHKERRQ(ierr);
+	ierr = MatAssemblyEnd(SIGMA, MAT_FINAL_ASSEMBLY);
+	CHKERRQ(ierr);
+
+// SVD is performed on {A} to get {A=U \times \Sigma \times V^*}
+// Refer to SLEPc documentation for more information
+	std::printf("\nTesting the result of SVD...\n");
+
+// U and V are unitary matrices {U^* \times U=I} and {V^* \times V=I}
+	std::printf("\tTesting if U and V are unitary...\n");
+	for (int i = 0; i < cols; i++) {
+		for (int j = 0; j < cols; j++) {
+			ierr = SVDGetSingularTriplet(svd, i, &sigma1, u1, v1);
+			CHKERRQ(ierr);
+
+			ierr = SVDGetSingularTriplet(svd, j, &sigma2, u2, v2);
+			CHKERRQ(ierr);
+
+			ierr = VecDot(u1, u2, &temp1);
+			CHKERRQ(ierr);
+
+			ierr = VecDot(v1, v2, &temp2);
+			CHKERRQ(ierr);
+
+			if (i == j) {
+				if (std::abs(temp1 - 1.0) > 1e-10)
+					std::printf("\t{u[%i] \\dot u[%i]} is not equal to 1.0\n",
+							i, j);
+				if (std::abs(temp2 - 1.0) > 1e-10)
+					std::printf("\t{v[%i] \\dot v[%i]} is not equal to 1.0\n",
+							i, j);
+			} else {
+				if (std::abs(temp1 - 0.0) > 1e-10)
+					std::printf("\t{u[%i] \\dot u[%i]} is not equal to 0.0\n",
+							i, j);
+				if (std::abs(temp2 - 0.0) > 1e-10)
+					std::printf("\t{v[%i] \\dot v[%i]} is not equal to 0.0\n",
+							i, j);
+			}
+		}
+	}
+
+// {A \times V = U \times \Sigma}
+	std::printf("\tTesting if {A = U \\times \\Sigma \\times V^*}...\n");
+
+	ierr = MatMatMatMult(U, SIGMA, Vstar, MAT_INITIAL_MATRIX, PETSC_DEFAULT,
+			&USV);
+	CHKERRQ(ierr);
+
+	for (int j = 0; j < cols; j++) {
+		for (int i = 0; i < rows; i++) {
+			ierr = MatGetValue(X1, i, j, &temp1);
+			CHKERRQ(ierr);
+
+			ierr = MatGetValue(USV, i, j, &temp2);
+			CHKERRQ(ierr);
+			if (std::abs(temp1 - temp2) > 1e-10)
+				std::printf(
+						"\tThe result of SVD with index [%i][%i] is not equal to the same entry in the original matrix by %g!\n",
+						i, j, std::abs(temp1 - temp2));
+		}
+	}
+
+	return ierr;
+}
 
 

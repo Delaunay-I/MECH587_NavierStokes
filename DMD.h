@@ -8,6 +8,7 @@
 #ifndef APPS_CONVRATESPEEDUP_DMD_H_
 #define APPS_CONVRATESPEEDUP_DMD_H_
 
+#include <iostream>
 #include <stdio.h>
 #include <memory>
 #include <chrono>
@@ -25,16 +26,20 @@
 #include <cblas.h>
 #include <lapacke.h>
 
+#include "petscmat.h"
+//#include <Eigen/Dense>
+#include <Eigen/Core>
+#include <Eigen/Eigenvalues>
+
 //#define DEBUG_DMD
 //#define DEBUG_DMD_EPS
 //#define PRINT_EIGENVALUES
-//#define DMD_CHECK_EIGS
+#define DMD_CHECK_EIGS
 //#define DMD_SIGMARATIO
 //#define CALC_CONDITION_NUMBER_OF_UPDATE
 //#define COMPLEX_NUMBER_PROBLEM
 #define TIMING
-#define CORETHRESH 0.85
-
+#define CORETHRESH 0.0
 
 # define M_PIl          3.141592653589793238462643383279502884L /* pi */
 
@@ -55,7 +60,9 @@ private:
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
 
 	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
-	Mat Atilde = PETSC_NULL, Phi = PETSC_NULL, time_dynamics = PETSC_NULL;
+	Mat Atilde = PETSC_NULL, time_dynamics = PETSC_NULL;
+	Eigen::MatrixXcd eigenPhi; // DMD modes - Eigen3 Matrix (em)
+	Eigen::MatrixXcd epsPhi;
 
 	Vec update = NULL;
 
@@ -64,6 +71,9 @@ private:
 		Mat Ur = PETSC_NULL, Sr = PETSC_NULL, Vr = PETSC_NULL;
 		Mat Sr_inv = NULL, W = NULL;
 		ComplexSTLVec eigs;
+		Eigen::VectorXcd evOmega; // Dominant eigenvalues of the solution updates
+		Eigen::MatrixXcd emWsorted;
+		Eigen::VectorXcd eVLambdas;
 	};
 
 	struct _DATA{
@@ -88,7 +98,7 @@ public:
 	PetscErrorCode prepareData();
 
 	PetscErrorCode regression(bool dummyDMD = false);
-//	PetscErrorCode calcDMDmodes(); // does not include complex numbers - should be fixed!!
+	PetscErrorCode calcDMDmodes(); // does not include complex numbers - should be fixed!!
 	PetscErrorCode computeMatUpdate();
 
 	PetscErrorCode applyDMDMatTrans();
@@ -101,8 +111,8 @@ public:
 		return update;
 	}
 
-	const Mat& mGetDMDModes() const {
-		return Phi;
+	Eigen::MatrixXcd mGetDMDModes() const {
+		return eigenPhi;
 	}
 
 	PetscInt iGetSVDRank() const {
@@ -126,6 +136,7 @@ public:
 	PetscErrorCode lapackMatInv(Mat &A);
 	PetscErrorCode calcUpdateNorm(const _svd &LowSVD,
 			const Mat &mAtilde, const Mat &mX1, const Mat &mX2);
+	PetscErrorCode dotwDMDmodes(const Vec& pVec, int numMode, bool eigen3);
 
 	/* -----  Print functions  ------ */
 	PetscErrorCode printMatMATLAB(std::string sFilename,
@@ -136,6 +147,8 @@ public:
 			std::string sVectorName, Vec V) const;
 	PetscErrorCode printMatPYTHON(std::string sFilename,
 			std::string sMatrixName, Mat A) const;
+	PetscErrorCode testSVD(SVD& svd);
+	PetscErrorCode testEPS();
 
 	void recordTime(std::chrono::steady_clock::time_point start,
 			std::string sMessage);

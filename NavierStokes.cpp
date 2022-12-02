@@ -61,7 +61,7 @@ void initialize(double*** Soln, double*** dSoln) {
 			double Y = (j - 0.5) * dY;
 			Soln[i][j][0] = P0 * cos(PI * X) * cos(PI * Y);
 			Soln[i][j][1] = u0 * sin(PI * X) * sin(2 * PI * Y);
-			Soln[i][j][2] = v0 * sin(2 * PI * X) * sin(PI * Y);
+			Soln[i][j][2] = my_v0 * sin(2 * PI * X) * sin(PI * Y);
 		}
 	}
 	/* for validation part */
@@ -488,7 +488,7 @@ int main(int argc, char **argv) {
 	fLOG = fopen("Log.dat", "a");
 	auto stop =	std::chrono::steady_clock::now();
 	std::chrono::duration<double> duration = stop - start;
-	fprintf(fLOG, "Total time: %f [s]\n", duration.count());
+	fprintf(fLOG, "Total time: %f [s]\n\n\n", duration.count());
 	fclose(fLOG);
 
 	if (flg_DMD && !flg_dmdAuto) {
@@ -513,12 +513,9 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 	fprintf(solution, "%4s %14s %14s %14s\n", "iter", "dP", "dU", "dV");
 
 	_snapshots_type snap;
-	Vec vvGlobal{}, vUpdBefore{};
+	Vec vvGlobal{}, vUpdBefore{}, vUpdAfter{}, tmpDMDUpdate{};
 
-	ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX * JMAX * 3, &vvGlobal);
-	CHKERRQ(ierr);
-	ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX * JMAX * 3, &vUpdBefore);
-	CHKERRQ(ierr);
+	ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX * JMAX * 3, &vvGlobal); CHKERRQ(ierr);
 
 	for (int iDMD = 0; iDMD < nDMD + 1; iDMD++) {
 		for (; iter <= dmdIter[iDMD]; iter++) {
@@ -564,10 +561,13 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				FILE *fLOG;
 				fLOG = fopen("Log.dat", "a");
 				fprintf(fLOG, "iter: %i\n", iter);
-				fclose(fLOG);
+
 
 				// Recording the update before DMD
+				ierr = VecDuplicate(vvGlobal, &vUpdBefore); CHKERRQ(ierr);
 				ierr= VecCopy(vvGlobal, vUpdBefore); CHKERRQ(ierr);
+				ierr = printVecMATLAB("update-before" + std::to_string(dmdIter[iDMD]), "vupdBefore", vUpdBefore); CHKERRQ(ierr);
+
 				ierr = VecNormalize(vUpdBefore, NULL); CHKERRQ(ierr);
 
 				PetscReal dTimeStep = dT;
@@ -578,12 +578,29 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				Vec vUpdate { };
 				vUpdate = a_dmd.vgetUpdate();
 
-				Vec tmpDMDUpdate{};
+				bool eigen3 = true;
+				a_dmd.dotwDMDmodes(vUpdBefore, 2, eigen3);
+				bool petsEPS = false;
+				a_dmd.dotwDMDmodes(vUpdBefore, 0, petsEPS);
+				a_dmd.dotwDMDmodes(vUpdBefore, 2, petsEPS);
+				a_dmd.dotwDMDmodes(vUpdBefore, 4, petsEPS);
+				a_dmd.dotwDMDmodes(vUpdBefore, 6, petsEPS);
+				a_dmd.dotwDMDmodes(vUpdBefore, 8, petsEPS);
+
+
+
+
+
+
 				ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
 				ierr = VecCopy(vUpdate, tmpDMDUpdate); CHKERRQ(ierr);
+				ierr = printVecMATLAB("update-DMD" + std::to_string(dmdIter[iDMD]), "DMDupdate", tmpDMDUpdate); CHKERRQ(ierr);
+
 				ierr = VecNormalize(tmpDMDUpdate, NULL); CHKERRQ(ierr);
 				PetscReal dot_BD{};
 				ierr = VecDot(tmpDMDUpdate, vUpdBefore, &dot_BD); CHKERRQ(ierr);
+				fprintf(fLOG, "<Before, DMD> = %5f\n", dot_BD);
+				fclose(fLOG);
 
 				printf("Correlation of DMD update and previous solver update: %f \n", dot_BD);
 				if(dot_BD > CORETHRESH){
@@ -606,6 +623,24 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 
 			}
 
+			if ((iter == dmdIter[iDMD-1] + 1)){
+				ierr = VecDuplicate(vvGlobal, &vUpdAfter); CHKERRQ(ierr);
+				ierr= VecCopy(vvGlobal, vUpdAfter); CHKERRQ(ierr);
+				ierr = VecNormalize(vUpdAfter, NULL); CHKERRQ(ierr);
+
+				double dot_BD{}, dot_BA{}, dot_AD{};
+				ierr = VecDot(vUpdBefore, tmpDMDUpdate, &dot_BD); CHKERRQ(ierr);
+				ierr = VecDot(vUpdBefore, vUpdAfter, &dot_BA); CHKERRQ(ierr);
+				ierr = VecDot(vUpdAfter, tmpDMDUpdate, &dot_AD); CHKERRQ(ierr);
+
+				FILE *fLOG;
+				fLOG = fopen("Log.dat", "a");
+				fprintf(fLOG, "<Before, DMD> = %5f\n", dot_BD);
+				fprintf(fLOG, "<Before, After> = %5f\n", dot_BA);
+				fprintf(fLOG, "<After, DMD> = %5f\n", dot_AD);
+				fclose(fLOG);
+			}
+
 			if (l2norm < 1.e-10 || iter == numIters) {
 				ierr = PetscPrintf(PETSC_COMM_WORLD,
 						"Converged to satisfactory point!!\n");
@@ -619,6 +654,9 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 	fclose(solution);
 	ierr = MatDestroy(&snap.mat); CHKERRQ(ierr);
 	ierr = VecDestroy(&vvGlobal); CHKERRQ(ierr);
+	ierr = VecDestroy(&vUpdBefore); CHKERRQ(ierr);
+	ierr = VecDestroy(&tmpDMDUpdate); CHKERRQ(ierr);
+
 
 	return ierr;
 }
@@ -630,7 +668,7 @@ PetscErrorCode TimeAdvanceSmart(PetscInt & isnapFreq, PetscInt &numIters, PetscI
 	double l2norm{};
 
 	FILE *residual, *solution;
-	residual = fopen("Residuals.dat", "w");
+	residual = fopen("Residual.dat", "w");
 	solution = fopen("solution.dat", "w");
 	fprintf(solution, "%4s %14s %14s %14s\n", "iter", "dP", "dU", "dV");
 
@@ -1059,4 +1097,7 @@ void Linear_Regression(std::vector<T> indep_var, std::deque<T> dep_var, M &a_1, 
 	a_1 = exp(a_1);
 
 }
+
+
+
 

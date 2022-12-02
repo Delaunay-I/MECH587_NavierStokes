@@ -39,12 +39,12 @@ extern double dT;
 /*----variables for checking corectness of flux inregral in part 1----*/
 #define P0 1.0
 #define u0 1.0
-#define v0 1.0
+#define my_v0 1.0
 
 #define PI 3.141592653589793238462643383279502884L /* pi */
 
 // //macro for finding MAX of a pair
-// #define MAX(a,b) ((a)> (b) ? (a) : (b))
+ #define MAX(a,b) ((a)> (b) ? (a) : (b))
 
 //Tolerance for convergence
 #define Tol 1.e-15
