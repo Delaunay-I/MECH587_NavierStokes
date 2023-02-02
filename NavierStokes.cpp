@@ -578,19 +578,15 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				Vec vUpdate { };
 				vUpdate = a_dmd.vgetUpdate();
 
+				// getting the dot product of the update before DMD and the DMD modes - for eigen3
 				bool eigen3 = true;
-				a_dmd.dotwDMDmodes(vUpdBefore, 2, eigen3);
+				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
+					a_dmd.dotwDMDmodes(vUpdBefore, i, eigen3);
+				}
 				bool petsEPS = false;
-				a_dmd.dotwDMDmodes(vUpdBefore, 0, petsEPS);
-				a_dmd.dotwDMDmodes(vUpdBefore, 2, petsEPS);
-				a_dmd.dotwDMDmodes(vUpdBefore, 4, petsEPS);
-				a_dmd.dotwDMDmodes(vUpdBefore, 6, petsEPS);
-				a_dmd.dotwDMDmodes(vUpdBefore, 8, petsEPS);
-
-
-
-
-
+				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
+					a_dmd.dotwDMDmodes(vUpdBefore, i, petsEPS);
+				}
 
 				ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
 				ierr = VecCopy(vUpdate, tmpDMDUpdate); CHKERRQ(ierr);
@@ -913,7 +909,7 @@ PetscErrorCode readOpts(PetscReal &dT, PetscInt &isnapFreq, PetscInt &max_iter_t
 	}
 
 	nDMD = 0;
-	ierr = PetscMalloc1(nDMD + 1, &dmdIter); CHKERRQ(ierr);
+	ierr = PetscMalloc(nDMD + 1, &dmdIter); CHKERRQ(ierr);
 	dmdIter[nDMD] = max_iter_total;
 	}
 	return ierr;
@@ -952,7 +948,14 @@ PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
 			snap.mValues.push_back(0.0);
 		}
 	}
-
+#ifdef SNAPS_SUB_MEAN
+	PetscReal sum{};
+	ierr = VecSum(vec, &sum);CHKERRQ(ierr);
+	ierr = VecShift(vec, -sum / (double) snap.iNumCols);CHKERRQ(ierr);
+#endif
+#ifdef SNAPS_VEC_NORMALIZE
+	ierr = VecNormalize(vec, NULL); CHKERRQ(ierr);
+#endif
 	// getting the flattened data from the solution vector
 	ierr = VecGetValues(vec, snap.iNumCols, snap.col_index.data(), snap.vValues.data());CHKERRQ(ierr);
 
@@ -975,7 +978,7 @@ PetscErrorCode initSnapsMat(Vec& vec, _snapshots_type& snap) {
 }
 
 /*  * Updating the snapshot matrix by inserting new rows (short-fat matrix)
- * This is a row-major dataset, each solution vector is defined in each row
+ * This is a row-major d ataset, each solution vector is defined in each row
  */
 PetscErrorCode updateSolutionMatrix(Vec& vec, _snapshots_type& snap) {
 	PetscErrorCode ierr;
@@ -987,7 +990,14 @@ PetscErrorCode updateSolutionMatrix(Vec& vec, _snapshots_type& snap) {
 	ierr = MatSetValues(snap.mat, snap.iNumRows - 1, snap.new_row_indices.data(),
 			snap.iNumCols, snap.col_index.data(),
 			snap.mValues.data(), INSERT_VALUES); CHKERRQ(ierr);
-
+#ifdef SNAPS_SUB_MEAN
+	PetscReal sum{};
+	ierr = VecSum(vec, &sum);CHKERRQ(ierr);
+	ierr = VecShift(vec, -sum / (double) snap.iNumCols);CHKERRQ(ierr);
+#endif
+#ifdef SNAPS_VEC_NORMALIZE
+	ierr = VecNormalize(vec, NULL); CHKERRQ(ierr);
+#endif
 	//getting the serialized data from the solution vector
 	ierr = VecGetValues(vec, snap.iNumCols, snap.col_index.data(), snap.vValues.data()); CHKERRQ(ierr);
 

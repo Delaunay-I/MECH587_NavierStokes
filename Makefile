@@ -4,8 +4,11 @@ CC = mpic++
 CFLAGS = -g -o0 -Wall -std=c++17 #-v
 LINKER_FLAGS = -Wl,–verbose
 
-SLEPC_DIR = /home/mirshahi/slepc
-PETSC_DIR = /home/mirshahi/petsc
+# SLEPC_DIR = /home/mirshahi/slepc
+# PETSC_DIR = /home/mirshahi/petsc
+
+PETSC_DIR=/usr/anslab/src/petsc
+SLEPC_DIR=/usr/anslab/src/slepc
 
 EXTRA_FLAGS = -lm -lblas -llapack -llapacke -lpetsc -lslepc
 INCLUDES = -I/$(SLEPC_DIR)/include -I/${SLEPC_DIR}/${PETSC_ARCH}/include \

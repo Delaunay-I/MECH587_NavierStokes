@@ -33,12 +33,16 @@
 
 //#define DEBUG_DMD
 //#define DEBUG_DMD_EPS
+//#define TEST_EIGEN_SYSTEMS
 //#define PRINT_EIGENVALUES
-#define DMD_CHECK_EIGS
+//#define DMD_CHECK_EIGS
 //#define DMD_SIGMARATIO
 //#define CALC_CONDITION_NUMBER_OF_UPDATE
 //#define COMPLEX_NUMBER_PROBLEM
-#define TIMING
+//#define TIMING
+//#define SNAPS_SUB_MEAN
+//#define SNAPS_VEC_NORMALIZE //normalize snapshot vectors
+
 #define CORETHRESH 0.0
 
 # define M_PIl          3.141592653589793238462643383279502884L /* pi */

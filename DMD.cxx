@@ -107,6 +107,7 @@ DMD::~DMD() {
 /*
  * Splitting data into 2 matrices
  * Hence the definition of the rows and columns are opposite
+ * This function is implemented for a row-major snapshot matrix
  */
 PetscErrorCode DMD::prepareData(){
 	PetscErrorCode ierr;
@@ -117,7 +118,9 @@ PetscErrorCode DMD::prepareData(){
 	ierr = PetscMalloc1(rows - 1, &X1row_index); CHKERRQ(ierr);
 	ierr = PetscMalloc1(rows - 1, &X2row_index); CHKERRQ(ierr);
 	ierr = PetscMalloc1(cols*(rows - 1), &dTmpArr); CHKERRQ(ierr);
-
+#ifdef DEBUG_DMD
+	ierr = printMatMATLAB("X", "X", *X.mat); CHKERRQ(ierr);
+#endif
 
 	for (int i = 0; i < rows - 1; i++) {
 		X1row_index[i] = i; //X1col_index is used for both X1 and X2 for setting values
@@ -164,7 +167,10 @@ PetscErrorCode DMD::prepareData(){
 	ierr = MatTranspose(X2, MAT_INPLACE_MATRIX, &X2); CHKERRQ(ierr);
 #ifdef DEBUG_DMD
 	ierr = printMatMATLAB("X1", "X1", X1); CHKERRQ(ierr);
+	ierr = printMatMATLAB("X2", "X2", X2); CHKERRQ(ierr);
+
 #endif
+
 	ierr = PetscFree(X1row_index); CHKERRQ(ierr);
 	ierr = PetscFree(X2row_index); CHKERRQ(ierr);
 	ierr = PetscFree(dTmpArr); CHKERRQ(ierr);
@@ -349,13 +355,13 @@ PetscErrorCode DMD::solveSVD(SVD& svd, Mat& mMatrix){
 
 	ierr = SVDCreate(PETSC_COMM_WORLD, &svd);
 	CHKERRQ(ierr);
-	ierr = SVDSetOperators(svd, mMatrix, NULL); // This function is changed to SVDSetOperators(SVD svd,Mat A,Mat B) in the new version of SLEPC.
+	ierr = SVDSetOperator(svd, mMatrix);  // This function is changed to SVDSetOperators(SVD svd,Mat A,Mat B) in the new version of SLEPC.
 	CHKERRQ(ierr);
 	ierr = SVDSetType(svd, SVDLANCZOS);
 	CHKERRQ(ierr);
-	ierr = SVDSetWhichSingularTriplets(svd, SVD_LARGEST);
-	CHKERRQ(ierr);
 	ierr = SVDSetDimensions(svd, nsv, PETSC_DEFAULT, PETSC_DEFAULT);
+	CHKERRQ(ierr);
+	ierr = SVDSetWhichSingularTriplets(svd, SVD_LARGEST);
 	CHKERRQ(ierr);
 
 	ierr = PetscPrintf(PETSC_COMM_WORLD,
@@ -469,8 +475,11 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 	ierr = MatZeroEntries(LowSVD.Vr); CHKERRQ(ierr);
 
 		/* Getting SVD modes column by column */
-	std::ofstream out;
+	std::ofstream out, regData_S, regData_sigRate1;
 	out.open(DEB_TOOL_DIR + sFileName + "-Sr-n" + std::to_string(isDMD_execs) + ".dat");
+	regData_S.open(DEB_TOOL_DIR + "SvLast_data_i" + std::to_string(isDMD_execs) + ".dat", std::ios_base::app);
+	regData_sigRate1.open(DEB_TOOL_DIR + "Sv1_data_i" + std::to_string(isDMD_execs) + ".dat", std::ios_base::app);
+
 	PetscReal sigma1, sigLast, sig2, sigRate;
 
 	for (int j = 0; j < numCols; j++) {
@@ -481,8 +490,14 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 			sig2 = sigma;
 			sigRate = sig2 / sigLast;
 			out << sigma << "\t" << sigRate;
+			if (j <= 9)
+			regData_S << sigRate << std::endl;
+
 			sigRate = sig2 / sigma1;
 			out << "\t" << sigRate << std::endl;
+			if (j <= 9)
+				regData_sigRate1 << sigRate << std::endl;
+
 		}
 		if (j < numCols - 1) {
 			sigLast = sigma;
@@ -498,6 +513,9 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 		ierr = VecGetValues(v, X1Cols, VrCol_index, column_vec); CHKERRQ(ierr);
 		ierr = MatSetValues(LowSVD.Vr, X1Cols, VrCol_index, 1, &index, column_vec, INSERT_VALUES); CHKERRQ(ierr);
 	}
+	out.close();
+	regData_S.close();
+	regData_sigRate1.close();
 
 	ierr = MatAssemblyBegin(LowSVD.Ur, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 	ierr = MatAssemblyEnd(LowSVD.Ur, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
@@ -523,8 +541,6 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 		fprintf(fLog, "\u03BA(%s): %.3f\n", sFileName.c_str(), condNumb);
 	}
 #endif
-	out.close();
-
 #ifdef DEBUG_DMD
 	printMatMATLAB(DEB_TOOL_DIR + sFileName + "-Ur", "Ur", LowSVD.Ur);
 	printMatMATLAB(DEB_TOOL_DIR + sFileName + "-Sr", "Sr", LowSVD.Sr);
@@ -576,6 +592,7 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 	ierr = MatAYPX(X2approx, -1, mX2, SAME_NONZERO_PATTERN); CHKERRQ(ierr);
 
 	ierr = MatNorm(X2approx, NORM_FROBENIUS, &dFroNorm); CHKERRQ(ierr);
+	fprintf(fLog, "DMD norm:\t%e\tSolution norm:\t%e\n", dFroNorm, iterNorm);
 	dFroNorm /= iterNorm;
 	fprintf(fLog, "Frobenius norm (Normalized):\t%e\n", dFroNorm);
 
@@ -585,10 +602,6 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 	return ierr;
 }
 
-
-/*
- * This function does not consider complex numbers in the eigenvectors matrix - SHOULD BE FIXED
- */
 
 PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFileName, bool calcEigenvectors) {
 	PetscErrorCode ierr;
@@ -606,7 +619,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	ierr = EPSSetType(eps, EPSLAPACK); CHKERRQ(ierr);
 	ierr = EPSSetWhichEigenpairs(eps, EPS_LARGEST_REAL); CHKERRQ(ierr);
 	ierr = EPSSetDimensions(eps, rank, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
-	ierr = EPSSetTolerances(eps, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
+	ierr = EPSSetTolerances(eps, 1e-16, 100); CHKERRQ(ierr);
 
 	ierr = EPSSolve(eps);	CHKERRQ(ierr);
 	ierr = EPSGetConverged(eps, &nconv); CHKERRQ(ierr);
@@ -648,13 +661,11 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	/* ------ Extracting eigenvalues --------- */
 	PetscScalar dReal, dImag, dError;
 	Vec vr, vi;
-
+	ierr = MatCreateVecs(matrix, NULL, &vr); CHKERRQ(ierr);
+	ierr = MatCreateVecs(matrix, NULL, &vi); CHKERRQ(ierr);
 	// For calcmodes
 #ifdef COMPLEX_NUMBER_PROBLEM
 	if (calcEigenvectors){
-		ierr = MatCreateVecs(matrix, NULL, &vr); CHKERRQ(ierr);
-		ierr = MatCreateVecs(matrix, NULL, &vi); CHKERRQ(ierr);
-
 		ierr = MatDestroy(&LowSVD.W); CHKERRQ(ierr);
 		ierr = MatCreate(PETSC_COMM_WORLD, &LowSVD.W); CHKERRQ(ierr);
 		ierr = MatSetSizes(LowSVD.W, PETSC_DECIDE, PETSC_DECIDE, rank, rank); CHKERRQ(ierr);
@@ -672,8 +683,10 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 
 	std::fprintf(fEigs, "VARIABLES = \"NUM\" \"sigma-Real\" \"sigma-Imag\" \"Rel. Error\" \"Eig-Real\""
 			"\"Eig-Imag\"\n");
-	LowSVD.emWsorted = Eigen::MatrixXcd::Zero(rank, rank);
-	LowSVD.eVLambdas = Eigen::VectorXcd::Zero(rank);
+
+
+	LowSVD.emWsorted.resize(rank, rank);
+	LowSVD.eVLambdas.resize(rank);
 
 	for (PetscInt i = 0; i < nconv; i++) {
 
@@ -691,11 +704,6 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 
 		std::fprintf(fEigs, "%.2i\t%.12g\t%12g\t%.12g\t%.12g\t%.12g\t\n", i + 1,
 				dReal, dImag, dError, OmegaReal, OmegaImag);
-		for (int row = 0; row < rank; row++) {
-			PetscScalar dVecr;
-			ierr = VecGetValues(vr, 1, &row, &dVecr); CHKERRQ(ierr);
-			ierr = MatSetValue(LowSVD.W, row, i, dVecr, INSERT_VALUES);CHKERRQ(ierr);
-		}
 
 		Eigen::VectorXd evReal = pVec_to_eVec_double(vr);
 		Eigen::VectorXd evImag = pVec_to_eVec_double(vi);
@@ -703,6 +711,12 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 		LowSVD.emWsorted.col(i).real() << evReal;
 		LowSVD.emWsorted.col(i).imag() << evImag;
 
+
+//		for (int row = 0; row < rank; row++) {
+//			PetscScalar dVecr;
+//			ierr = VecGetValues(vr, 1, &row, &dVecr); CHKERRQ(ierr);
+//			ierr = MatSetValue(LowSVD.W, row, i, dVecr, INSERT_VALUES);CHKERRQ(ierr);
+//		}
 
 #ifdef PRINT_EIGENVALUES
 		printf("eigen %i: %f %fi\n", i + 1, std::real(LowSVD.eigs[i]), std::imag(LowSVD.eigs[i]));
@@ -715,25 +729,25 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	}
 	ierr = printMatPYTHON("petscEigenvectors", "eigenvectors", LowSVD.W); CHKERRQ(ierr);
 	ierr = printMatMATLAB("petscEigenvectors", "eigenvectors", LowSVD.W); CHKERRQ(ierr);
+#endif
 
-	std::ofstream feEigenvalues("eEigenvalues.dat");
+	std::ofstream feEigenvalues("epsEigs.dat");
 	if (feEigenvalues.is_open()) {
 		feEigenvalues << LowSVD.eVLambdas << '\n';
 	}
 	feEigenvalues.close();
-	std::ofstream fWs("Ws.dat");
+	std::ofstream fWs("epsW.dat");
 	if (fWs.is_open()) {
 		fWs << LowSVD.emWsorted << '\n';
 	}
 	fWs.close();
 
-#endif
 
 	std::fprintf(fEigs, "\n");
 	std::fclose(fEigs);
-
+#ifdef TEST_EIGEN_SYSTEMS
 	ierr = testEPS(); CHKERRQ(ierr);
-
+#endif
 	ierr = EPSDestroy(&eps);CHKERRQ(ierr);
 	ierr = VecDestroy(&vr); CHKERRQ(ierr);
 	ierr = VecDestroy(&vi); CHKERRQ(ierr);
@@ -902,11 +916,9 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
 #ifdef TIMING
 	auto stop =	std::chrono::steady_clock::now();
 	std::chrono::duration<double> duration = stop - start;
-//	std::printf("%s: %f [seconds]\n", sMessage.c_str(), duration.count());
 	fprintf(fLog, "%s: %f [s]\n", sMessage.c_str(), duration.count());
 #endif
 }
-
 
 
 /*
@@ -930,18 +942,7 @@ PetscErrorCode DMD::calcDMDmodes(){
 	Eigen::VectorXcd eivals = eigenSystem.eigenvalues();
 	Eigen::MatrixXcd eW = eigenSystem.eigenvectors();
 
-	std::ofstream fEig("eigen3Eigenvalues.dat");
-	if (fEig.is_open()) {
-		fEig << eivals << '\n';
-	}
-	fEig.close();
-
-	std::ofstream fWsorted("eigen3W.dat");
-	if (fWsorted.is_open()) {
-		fWsorted << eW << '\n';
-	}
-	fWsorted.close();
-
+#ifdef TEST_EIGEN_SYSTEMS
 	std::printf("\nTesting the result of eigen solver (Eigen3)...\n");
 	std::printf("\tTesting if Aw = wL\n");
 	for (int i = 0; i < eivals.size(); i++) {
@@ -950,102 +951,65 @@ PetscErrorCode DMD::calcDMDmodes(){
 			std::cout << i << " eigenvector error: "<< epsError << std::endl;
 		}
 	}
+#endif
 
 	// Computing the DMD modes
+	// These two are required in dot product functions below. So don't delete them yet
 	epsPhi = eX2 * eVr * eSr_inv * lrSVD.emWsorted;
 	eigenPhi = eX2 * eVr * eSr_inv * eW;
 
 	{
-		std::ofstream fPhi("Phi.dat");
+		std::ofstream fWsorted("eigen3W.dat");
+		if (fWsorted.is_open()) {
+			fWsorted << eW << '\n';
+		}
+		fWsorted.close();
+
+		std::ofstream fPhi("Phi_DMD_"+std::to_string(isDMD_execs)+".dat");
 		if (fPhi.is_open()) {
 			fPhi << eigenPhi.real() << '\n';
 		}
 		fPhi.close();
 
-		std::ofstream fEig("eigs.dat");
-		if (fEig.is_open()) {
-			fEig << eigenSystem.eigenvalues() << '\n';
-		}
-		fEig.close();
-
-		lrSVD.evOmega = (eigenSystem.eigenvalues()).array().log();
+		lrSVD.evOmega = eivals.array().log();
 		lrSVD.evOmega /= dt;
-		std::ofstream fOmega("Omega.txt");
+		std::ofstream fOmega("Omega.dat");
 		if (fOmega.is_open()) {
 			fOmega << lrSVD.evOmega << '\n';
 		}
 		fOmega.close();
+
+		std::ofstream fEig("eigen3Eigs_DMD_"+std::to_string(isDMD_execs)+".dat");
+		if (fEig.is_open()) {
+			Eigen::MatrixXcd V_merged(eivals.rows(), 2);
+			V_merged << eivals, lrSVD.evOmega;
+			fEig << "Amp Factors\t\tEigenvalues\n";
+			fEig << std::left << V_merged;
+		}
+		fEig.close();
 	}
 
-//	Vec rhs, Soln; // rhs = x1, Soln = b
-//	KSP ksp;
-//	PC pc;
-//	ierr = VecCreateSeq(PETSC_COMM_SELF, X.num_rows, &rhs); CHKERRQ(ierr);
-//	ierr = VecCreateSeq(PETSC_COMM_SELF, svdRank, &Soln); CHKERRQ(ierr);
-//	ierr = MatGetColumnVector(*X.mat, rhs, 0); CHKERRQ(ierr);
-//
-//#ifdef DEBUG_DMD
-//	ierr = printVecMATLAB(DEB_MAT_DIR + "x1", "x1", rhs); CHKERRQ(ierr);
-//	ierr = printVecMATLAB(DEB_MAT_DIR + "b", "b", Soln); CHKERRQ(ierr);
-//
-//#endif
-//	ierr = KSPCreate(PETSC_COMM_WORLD, &ksp); CHKERRQ(ierr);
-//
-//	ierr = KSPSetOperators(ksp, Phi, Phi); CHKERRQ(ierr);
-//	ierr = KSPSetType(ksp, KSPLSQR); CHKERRQ(ierr);
-//	ierr = KSPGetPC(ksp, &pc); CHKERRQ(ierr);
-//	ierr = PCSetType(pc, PCNONE); CHKERRQ(ierr);
-//	ierr = KSPSetTolerances(ksp,1.e-7,PETSC_DEFAULT,PETSC_DEFAULT,PETSC_DEFAULT);CHKERRQ(ierr);
-//
-//	//ierr = KSPSetFromOptions(ksp); CHKERRQ(ierr);
-//
-//	ierr = KSPSolve(ksp, rhs, Soln); CHKERRQ(ierr);
-////	ierr = KSPView(ksp,PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
-//
-//#ifdef DEBUG_DMD
-//	/*
-//	 * The Solution of the least squares (b) is related to the eigenvectors and
-//	 * the fact that we are not including imaginery parts in the KSP solver
-//	 * So the results are diffferent from Python and MATLAB
-//	 */
-//	ierr = printVecMATLAB(DEB_MAT_DIR + "b", "b", Soln); CHKERRQ(ierr);
-//#endif
-//
-//	ierr = MatCreate(MPI_COMM_WORLD, &time_dynamics);	CHKERRQ(ierr);
-//	ierr = MatSetSizes(time_dynamics, PETSC_DECIDE, PETSC_DECIDE, X.num_cols,
-//			svdRank);	CHKERRQ(ierr);
-//	ierr = MatSetType(time_dynamics, MATAIJ); CHKERRQ(ierr);
-//	ierr = MatSetUp(time_dynamics);	CHKERRQ(ierr);
-//
-//	PetscReal t = 0;
-//	for (int iter = 0; iter < X.num_cols; iter++) {
-//		for (int mode = 0; mode < svdRank; mode++) {
-//			PetscScalar bVal;
-//			ierr = VecGetValues(Soln, 1, &mode, &bVal); CHKERRQ(ierr);
-////			PetscScalar value = std::real(bVal*exp(omega[mode]*t));
-////
-////			ierr = MatSetValue(time_dynamics_old, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
-//
-//			PetscScalar value = std::real(bVal*exp(omega[mode]*t));
-//			ierr = MatSetValue(time_dynamics, iter, mode, value, INSERT_VALUES); CHKERRQ(ierr);
-//
-//		}
-//		t += dt;
-//	}
-////	ierr = MatAssemblyBegin(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-////	ierr = MatAssemblyEnd(time_dynamics_old, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//	ierr = MatAssemblyBegin(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//	ierr = MatAssemblyEnd(time_dynamics, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
-//
-//#ifdef DEBUG_DMD
-//	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics_old", "TD", time_dynamics_old); CHKERRQ(ierr);
-//	ierr = printMatPYTHON(DEB_MAT_DIR + "TimeDynamics", "TD", time_dynamics); CHKERRQ(ierr);
-//#endif
-//
-//	ierr = MatDestroy(&X2_Vr); CHKERRQ(ierr);
-//	ierr = VecDestroy(&rhs); CHKERRQ(ierr);
-//	ierr = VecDestroy(&Soln); CHKERRQ(ierr);
-//	ierr = KSPDestroy(&ksp); CHKERRQ(ierr);
+
+
+	//---- Computing the time dynamics of the DMD modes -----//
+	Eigen::MatrixXd eX1 = pMat_to_eMat_double(X1);
+	Eigen::VectorXd V = eX1.col(0);
+
+//	 Solving the least square problem
+//	Eigen::VectorXcd b = epsPhi.householderQr().solve(eX1.col(0));
+	Eigen::VectorXcd b = (epsPhi.transpose() * epsPhi).ldlt().solve(epsPhi.transpose() * V);
+
+	std::cout << "solution of Eigen3 Lstq:" << b << std::endl;
+
+	// this is for the implementation of an array containing the time-dynamics
+//	Eigen::VectorXi t = Eigen::VectorXi::LinSpaced(1000, 0, 1000);
+//	std::cout << "time is:" << t << std::endl;
+
+	//But I only need the time-dynamics at some time in far future
+	//So don't need an array, and need only one far future time-step
+	Eigen::ArrayXd time_dynamics = abs(b.array() * (lrSVD.evOmega.array()*1000).exp());
+	std::cout << "time-dynamics is:" << time_dynamics << std::endl;
+
 	return ierr;
 }
 
@@ -1053,6 +1017,8 @@ PetscErrorCode DMD::dotwDMDmodes(const Vec& pVec, int numMode, bool Eigen3){
 	PetscErrorCode ierr = 0;
 	Eigen::VectorXd eVec = pVec_to_eVec_double(pVec);
 
+	assert(numMode <= svdRank &&
+			"Requested mode to take dot product with, does not exist.\n");
 	if (Eigen3) {
 	assert((eVec.size() == eigenPhi.col(numMode).size()) && "the vectors are not the same size for taking dot product!\n\n");
 	double dotMode = eVec.dot(eigenPhi.col(numMode).real());

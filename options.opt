@@ -5,15 +5,15 @@
 # -DMD_auto_config    # Automate DMD configurations: iteration to apply
 # -DummyDMDIter   700     # Iteration to check for oscillation period
 
--dmd_ranks 9,7,9 # Truncation of SVD
--DMD_nits  1          # Number of DMD applied
--DMD_its 800,1500,700 # iterations to apply the DMD update
 
--svd_ncv  10       # number of columns of the svd matrix
+-dmd_ranks 9,9,9 # Truncation of SVD
+-DMD_nits  1         # Number of DMD applied
+-DMD_its 300,800,1900 # iterations to apply the DMD update
+
+-svd_ncv 10	# number of columns of the svd matrix
+
+##### NOTE HERE - THIS SHOULD BE included or else the dataset would be recorded incorrectly ######
 -snapshot_frequency 1
 
--max_iter_total 801
+-max_iter_total 2000
 -dt 0.05
-
--eps_error_absolute
--eps_type lapack
