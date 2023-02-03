@@ -34,14 +34,14 @@
 //#define DEBUG_DMD
 //#define DEBUG_DMD_EPS
 //#define TEST_EIGEN_SYSTEMS
-//#define PRINT_EIGENVALUES
 //#define DMD_CHECK_EIGS
 //#define DMD_SIGMARATIO
 //#define CALC_CONDITION_NUMBER_OF_UPDATE
-//#define COMPLEX_NUMBER_PROBLEM
 //#define TIMING
 //#define SNAPS_SUB_MEAN
 //#define SNAPS_VEC_NORMALIZE //normalize snapshot vectors
+#define ML
+
 
 #define CORETHRESH 0.0
 
@@ -65,7 +65,7 @@ private:
 
 	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
 	Mat Atilde = PETSC_NULL, time_dynamics = PETSC_NULL;
-	Eigen::MatrixXcd eigenPhi; // DMD modes - Eigen3 Matrix (em)
+//	Eigen::MatrixXcd eigenPhi; // DMD modes - Eigen3 Matrix (em)
 	Eigen::MatrixXcd epsPhi;
 
 	Vec update = NULL;
@@ -74,10 +74,9 @@ private:
 	struct _svd{
 		Mat Ur = PETSC_NULL, Sr = PETSC_NULL, Vr = PETSC_NULL;
 		Mat Sr_inv = NULL, W = NULL;
-		ComplexSTLVec eigs;
-		Eigen::VectorXcd evOmega; // Dominant eigenvalues of the solution updates
-		Eigen::MatrixXcd emWsorted;
-		Eigen::VectorXcd eVLambdas;
+		Eigen::VectorXcd omega_sorted; // Dominant eigenvalues of the solution updates
+		Eigen::MatrixXcd eigVecs_small;
+		Eigen::VectorXcd eigs;
 	};
 
 	struct _DATA{
@@ -116,7 +115,7 @@ public:
 	}
 
 	Eigen::MatrixXcd mGetDMDModes() const {
-		return eigenPhi;
+		return epsPhi;
 	}
 
 	PetscInt iGetSVDRank() const {

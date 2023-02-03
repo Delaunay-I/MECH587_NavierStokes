@@ -579,29 +579,24 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				vUpdate = a_dmd.vgetUpdate();
 
 				// getting the dot product of the update before DMD and the DMD modes - for eigen3
-				bool eigen3 = true;
+				bool bEPS = true;
 				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
-					a_dmd.dotwDMDmodes(vUpdBefore, i, eigen3);
-				}
-				bool petsEPS = false;
-				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
-					a_dmd.dotwDMDmodes(vUpdBefore, i, petsEPS);
+					a_dmd.dotwDMDmodes(vUpdBefore, i, bEPS);
 				}
 
-				ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
-				ierr = VecCopy(vUpdate, tmpDMDUpdate); CHKERRQ(ierr);
-				ierr = printVecMATLAB("update-DMD" + std::to_string(dmdIter[iDMD]), "DMDupdate", tmpDMDUpdate); CHKERRQ(ierr);
+				{
+					ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
+					ierr = VecCopy(vUpdate, tmpDMDUpdate); CHKERRQ(ierr);
+//					ierr = printVecMATLAB("update-DMD" + std::to_string(dmdIter[iDMD]), "DMDupdate", tmpDMDUpdate); CHKERRQ(ierr);
 
-				ierr = VecNormalize(tmpDMDUpdate, NULL); CHKERRQ(ierr);
-				PetscReal dot_BD{};
-				ierr = VecDot(tmpDMDUpdate, vUpdBefore, &dot_BD); CHKERRQ(ierr);
-				fprintf(fLOG, "<Before, DMD> = %5f\n", dot_BD);
-				fclose(fLOG);
+					ierr = VecNormalize(tmpDMDUpdate, NULL); CHKERRQ(ierr);
+					PetscReal dot_BD{};
+					ierr = VecDot(tmpDMDUpdate, vUpdBefore, &dot_BD); CHKERRQ(ierr);
+					fprintf(fLOG, "<Before, DMD> = %5f\n", dot_BD);
+					fclose(fLOG);
 
-				printf("Correlation of DMD update and previous solver update: %f \n", dot_BD);
-				if(dot_BD > CORETHRESH){
-					printf("Applying the computed update.\n\n");
-
+					printf("Correlation of DMD update and previous solver update: %f \n", dot_BD);
+				}
 				for (int i = 1, index = 0; i <= IMAX; i++)
 					for (int j = 1; j <= JMAX; j++)
 						for (int k = 0; k < 3; k++, index++) {
@@ -611,9 +606,7 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 							FI[i][j][k] = value;
 							Soln[i][j][k] += value;
 						}
-				} else {
-					printf("DMD update discarded....\n");
-				}
+
 				std::string sMessage = "Total DMD time";
 				a_dmd.recordTime(start, sMessage);
 

@@ -482,9 +482,18 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 
 	PetscReal sigma1, sigLast, sig2, sigRate;
 
+	std::ofstream fML("ML_dataset.csv");
+
 	for (int j = 0; j < numCols; j++) {
 		PetscInt index = j;
 		ierr = SVDGetSingularTriplet(svd, j, &sigma, u, v); CHKERRQ(ierr);
+
+#ifdef ML
+		//Write singularvalues to the ML dataset
+		if (fML.is_open()) {
+			fML << sigma << ',';
+		}
+#endif
 
 		if (j > 0 && j < numCols) {
 			sig2 = sigma;
@@ -513,6 +522,7 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 		ierr = VecGetValues(v, X1Cols, VrCol_index, column_vec); CHKERRQ(ierr);
 		ierr = MatSetValues(LowSVD.Vr, X1Cols, VrCol_index, 1, &index, column_vec, INSERT_VALUES); CHKERRQ(ierr);
 	}
+	fML.close();
 	out.close();
 	regData_S.close();
 	regData_sigRate1.close();
@@ -663,17 +673,6 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	Vec vr, vi;
 	ierr = MatCreateVecs(matrix, NULL, &vr); CHKERRQ(ierr);
 	ierr = MatCreateVecs(matrix, NULL, &vi); CHKERRQ(ierr);
-	// For calcmodes
-#ifdef COMPLEX_NUMBER_PROBLEM
-	if (calcEigenvectors){
-		ierr = MatDestroy(&LowSVD.W); CHKERRQ(ierr);
-		ierr = MatCreate(PETSC_COMM_WORLD, &LowSVD.W); CHKERRQ(ierr);
-		ierr = MatSetSizes(LowSVD.W, PETSC_DECIDE, PETSC_DECIDE, rank, rank); CHKERRQ(ierr);
-		ierr = MatSetType(LowSVD.W, MATAIJ); CHKERRQ(ierr);
-		ierr = MatSetUp(LowSVD.W); CHKERRQ(ierr);
-		ierr = MatZeroEntries(LowSVD.W); CHKERRQ(ierr);
-	}
-#endif
 
 	FILE *fEigs;
 	std::string sName = DEB_TOOL_DIR + sFileName + "-eigs_n" + std::to_string(isDMD_execs) + ".dat";
@@ -685,63 +684,32 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 			"\"Eig-Imag\"\n");
 
 
-	LowSVD.emWsorted.resize(rank, rank);
-	LowSVD.eVLambdas.resize(rank);
+	LowSVD.eigVecs_small.resize(rank, rank);
+	LowSVD.eigs.resize(rank);
+	LowSVD.omega_sorted.resize(rank);
 
 	for (PetscInt i = 0; i < nconv; i++) {
 
 		ierr = EPSGetEigenpair(eps, i, &dReal, &dImag, vr, vi);	CHKERRQ(ierr);
 		ierr = EPSComputeError(eps, i, EPS_ERROR_RELATIVE, &dError);CHKERRQ(ierr);
-		LowSVD.eigs.push_back({dReal, dImag});
-		LowSVD.eVLambdas(i) = LowSVD.eigs.back();
+		ComplexNum tmp{dReal, dImag};
+		LowSVD.eigs(i) = tmp;
 
 		// Computing omega - solutions eigenvalues
-		ComplexNum tmp2 = log(LowSVD.eigs[i]);
-		assert(isfinite(std::real(tmp2)) && "Omega has infinite value!!\n\n");
-		omega.push_back(tmp2 / dt);
-		double OmegaReal = omega[i].real();
-		double OmegaImag = omega[i].imag();
+		assert(isfinite(std::real(log(tmp))) && "Omega has infinite value!!\n\n");
+		LowSVD.omega_sorted(i) = log(tmp);
+		LowSVD.omega_sorted(i) /= dt;
 
 		std::fprintf(fEigs, "%.2i\t%.12g\t%12g\t%.12g\t%.12g\t%.12g\t\n", i + 1,
-				dReal, dImag, dError, OmegaReal, OmegaImag);
+				dReal, dImag, dError,
+				LowSVD.omega_sorted(i).real() , LowSVD.omega_sorted(i).imag());
 
 		Eigen::VectorXd evReal = pVec_to_eVec_double(vr);
 		Eigen::VectorXd evImag = pVec_to_eVec_double(vi);
 
-		LowSVD.emWsorted.col(i).real() << evReal;
-		LowSVD.emWsorted.col(i).imag() << evImag;
-
-
-//		for (int row = 0; row < rank; row++) {
-//			PetscScalar dVecr;
-//			ierr = VecGetValues(vr, 1, &row, &dVecr); CHKERRQ(ierr);
-//			ierr = MatSetValue(LowSVD.W, row, i, dVecr, INSERT_VALUES);CHKERRQ(ierr);
-//		}
-
-#ifdef PRINT_EIGENVALUES
-		printf("eigen %i: %f %fi\n", i + 1, std::real(LowSVD.eigs[i]), std::imag(LowSVD.eigs[i]));
-#endif
+		LowSVD.eigVecs_small.col(i).real() << evReal;
+		LowSVD.eigVecs_small.col(i).imag() << evImag;
 	}
-#ifdef COMPLEX_NUMBER_PROBLEM
-	if (calcEigenvectors) {
-		ierr = MatAssemblyBegin(LowSVD.W, MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
-		ierr = MatAssemblyEnd(LowSVD.W, MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
-	}
-	ierr = printMatPYTHON("petscEigenvectors", "eigenvectors", LowSVD.W); CHKERRQ(ierr);
-	ierr = printMatMATLAB("petscEigenvectors", "eigenvectors", LowSVD.W); CHKERRQ(ierr);
-#endif
-
-	std::ofstream feEigenvalues("epsEigs.dat");
-	if (feEigenvalues.is_open()) {
-		feEigenvalues << LowSVD.eVLambdas << '\n';
-	}
-	feEigenvalues.close();
-	std::ofstream fWs("epsW.dat");
-	if (fWs.is_open()) {
-		fWs << LowSVD.emWsorted << '\n';
-	}
-	fWs.close();
-
 
 	std::fprintf(fEigs, "\n");
 	std::fclose(fEigs);
@@ -937,10 +905,10 @@ PetscErrorCode DMD::calcDMDmodes(){
 
 	ierr = printMatMATLAB("Atilde", "Atilde", Atilde); CHKERRQ(ierr);
 
-	Eigen::EigenSolver<Eigen::MatrixXd> eigenSystem;
-	eigenSystem.compute(eAtilde);
-	Eigen::VectorXcd eivals = eigenSystem.eigenvalues();
-	Eigen::MatrixXcd eW = eigenSystem.eigenvectors();
+//	Eigen::EigenSolver<Eigen::MatrixXd> eigenSystem;
+//	eigenSystem.compute(eAtilde);
+//	Eigen::VectorXcd eivals = eigenSystem.eigenvalues();
+//	Eigen::MatrixXcd eW = eigenSystem.eigenvectors();
 
 #ifdef TEST_EIGEN_SYSTEMS
 	std::printf("\nTesting the result of eigen solver (Eigen3)...\n");
@@ -955,38 +923,32 @@ PetscErrorCode DMD::calcDMDmodes(){
 
 	// Computing the DMD modes
 	// These two are required in dot product functions below. So don't delete them yet
-	epsPhi = eX2 * eVr * eSr_inv * lrSVD.emWsorted;
-	eigenPhi = eX2 * eVr * eSr_inv * eW;
+	epsPhi = eX2 * eVr * eSr_inv * lrSVD.eigVecs_small;
+//	eigenPhi = eX2 * eVr * eSr_inv * eW;
 
 	{
-		std::ofstream fWsorted("eigen3W.dat");
-		if (fWsorted.is_open()) {
-			fWsorted << eW << '\n';
-		}
-		fWsorted.close();
-
 		std::ofstream fPhi("Phi_DMD_"+std::to_string(isDMD_execs)+".dat");
 		if (fPhi.is_open()) {
-			fPhi << eigenPhi.real() << '\n';
+			fPhi << epsPhi.real() << '\n';
 		}
 		fPhi.close();
 
-		lrSVD.evOmega = eivals.array().log();
-		lrSVD.evOmega /= dt;
-		std::ofstream fOmega("Omega.dat");
-		if (fOmega.is_open()) {
-			fOmega << lrSVD.evOmega << '\n';
-		}
-		fOmega.close();
+//		lrSVD.evOmega = eivals.array().log();
+//		lrSVD.evOmega /= dt;
+//		std::ofstream fOmega("Omega.dat");
+//		if (fOmega.is_open()) {
+//			fOmega << lrSVD.evOmega << '\n';
+//		}
+//		fOmega.close();
 
-		std::ofstream fEig("eigen3Eigs_DMD_"+std::to_string(isDMD_execs)+".dat");
-		if (fEig.is_open()) {
-			Eigen::MatrixXcd V_merged(eivals.rows(), 2);
-			V_merged << eivals, lrSVD.evOmega;
-			fEig << "Amp Factors\t\tEigenvalues\n";
-			fEig << std::left << V_merged;
-		}
-		fEig.close();
+//		std::ofstream fEig("eigen3Eigs_DMD_"+std::to_string(isDMD_execs)+".dat");
+//		if (fEig.is_open()) {
+//			Eigen::MatrixXcd V_merged(eivals.rows(), 2);
+//			V_merged << eivals, lrSVD.evOmega;
+//			fEig << "Amp Factors\t\tEigenvalues\n";
+//			fEig << std::left << V_merged;
+//		}
+//		fEig.close();
 	}
 
 
@@ -1007,27 +969,30 @@ PetscErrorCode DMD::calcDMDmodes(){
 
 	//But I only need the time-dynamics at some time in far future
 	//So don't need an array, and need only one far future time-step
-	Eigen::ArrayXd time_dynamics = abs(b.array() * (lrSVD.evOmega.array()*1000).exp());
+	Eigen::ArrayXd time_dynamics = abs(b.array() * (lrSVD.omega_sorted.array()*1000).exp());
 	std::cout << "time-dynamics is:" << time_dynamics << std::endl;
 
 	return ierr;
 }
 
-PetscErrorCode DMD::dotwDMDmodes(const Vec& pVec, int numMode, bool Eigen3){
+PetscErrorCode DMD::dotwDMDmodes(const Vec& pVec, int numMode, bool bEPS){
 	PetscErrorCode ierr = 0;
 	Eigen::VectorXd eVec = pVec_to_eVec_double(pVec);
 
 	assert(numMode <= svdRank &&
 			"Requested mode to take dot product with, does not exist.\n");
-	if (Eigen3) {
-	assert((eVec.size() == eigenPhi.col(numMode).size()) && "the vectors are not the same size for taking dot product!\n\n");
-	double dotMode = eVec.dot(eigenPhi.col(numMode).real());
-	std::printf("dot with eigen3 mode (unsorted) %d:\t %f\n", numMode, dotMode);
-	} else {
+	if (bEPS) {
 	assert((eVec.size() == epsPhi.col(numMode).size()) && "the vectors are not the same size for taking dot product!\n\n");
 	double dotMode = eVec.dot(epsPhi.col(numMode).real());
-	std::printf("dot with EPS mode (unsorted) %d:\t %f\n", numMode, dotMode);
+	std::printf("dot with EPS mode (sorted) %d:\t %f\n", numMode, dotMode);
 	}
+
+	// Becuase I am only keeping the ordered modes computed through SLEPc EPS
+//	else {
+//		assert((eVec.size() == eigenPhi.col(numMode).size()) && "the vectors are not the same size for taking dot product!\n\n");
+//		double dotMode = eVec.dot(eigenPhi.col(numMode).real());
+//		std::printf("dot with eigen3 mode (unsorted) %d:\t %f\n", numMode, dotMode);
+//	}
 
 	return ierr;
 }
@@ -1115,12 +1080,12 @@ PetscErrorCode DMD::testEPS(){
 
 	eAtilde = pMat_to_eMat_double(Atilde);
 
-	std::cout << "EPS eigenvalues" << lrSVD.eVLambdas << std::endl;
+	std::cout << "EPS eigenvalues" << lrSVD.eigs << std::endl;
 
 	std::printf("\nTesting the result of EPS (SLEPc)...\n");
 	std::printf("\tTesting if Aw = wL\n");
-	for (int i = 0; i < lrSVD.eVLambdas.size(); i++) {
-		double epsError =  (eAtilde * lrSVD.emWsorted.col(i) - lrSVD.emWsorted.col(i) * lrSVD.eVLambdas(i)).norm();
+	for (int i = 0; i < lrSVD.eigs.size(); i++) {
+		double epsError =  (eAtilde * lrSVD.eigVecs_small.col(i) - lrSVD.eigVecs_small.col(i) * lrSVD.eigs(i)).norm();
 		if (epsError > 1e-16){
 			std::cout << i << " eigenvector error: "<< epsError << std::endl;
 		}
