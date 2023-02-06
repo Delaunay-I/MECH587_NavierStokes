@@ -589,10 +589,10 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				vUpdate = a_dmd.vgetUpdate();
 
 				// getting the dot product of the update before DMD and the DMD modes - for eigen3
-//				bool bEPS = true;
-//				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
-//					a_dmd.dotwDMDmodes(vUpdBefore, i, bEPS);
-//				}
+				bool bEPS = true;
+				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
+					a_dmd.dotwDMDmodes(vUpdBefore, i, bEPS);
+				}
 
 				{
 					ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
@@ -647,7 +647,8 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				goto outNest;
 			} else if (l2norm < 1.e-10 && DMD_executed) {
 				if (fML.is_open()) {
-					fML << "CONVERGED\n";
+					l2norm = get_l2norm(solution, iter);
+					fML << "CONVERGED" << l2norm <<"\n";
 				}
 			}
 #endif
