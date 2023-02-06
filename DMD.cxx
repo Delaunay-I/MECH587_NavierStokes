@@ -100,7 +100,6 @@ DMD::~DMD() {
 	MatDestroy(&lrSVD.Sr_inv);
 	MatDestroy(&lrSVD.W);
 	MatDestroy(&Atilde);
-	MatDestroy(&time_dynamics);
 	VecDestroy(&update);
 }
 
@@ -897,15 +896,15 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
 
 PetscErrorCode DMD::calcDMDmodes(){
 	PetscErrorCode ierr {};
-	Eigen::MatrixXd eX2, eVr, eAtilde, eSr_inv, eSr;
+	Eigen::MatrixXd eX2, eVr, eAtilde, eSr_inv;
 
 	eX2 = pMat_to_eMat_double(X2);
 	eVr = pMat_to_eMat_double(lrSVD.Vr);
 	eAtilde = pMat_to_eMat_double(Atilde);
 	eSr_inv = pMat_to_eMat_double(lrSVD.Sr_inv);
-	eSr = pMat_to_eMat_double(lrSVD.Sr);
 
 #ifdef ML
+	Eigen::MatrixXd eSr = pMat_to_eMat_double(lrSVD.Sr);
 	Eigen::MatrixXcd mDMD_energy = lrSVD.eigVecs_small.inverse() * eSr * eVr;
 	Eigen::ArrayXd DMD_energy_norms = mDMD_energy.real().rowwise().norm();
 	Eigen::IOFormat CSVFmt(Eigen::FullPrecision, Eigen::DontAlignCols, ", ");

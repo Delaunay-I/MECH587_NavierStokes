@@ -69,7 +69,7 @@ private:
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
 
 	Mat X1 = PETSC_NULL, X2 = PETSC_NULL;
-	Mat Atilde = PETSC_NULL, time_dynamics = PETSC_NULL;
+	Mat Atilde = PETSC_NULL;
 //	Eigen::MatrixXcd eigenPhi; // DMD modes - Eigen3 Matrix (em)
 	Eigen::MatrixXcd epsPhi;
 
