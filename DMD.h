@@ -40,7 +40,10 @@
 //#define TIMING
 //#define SNAPS_SUB_MEAN
 //#define SNAPS_VEC_NORMALIZE //normalize snapshot vectors
+//#define WRITE_SNAP_MAT
+
 #define ML
+
 
 
 #define CORETHRESH 0.0
@@ -60,6 +63,8 @@ private:
 	PetscInt iOsclPeriod = 0; // Oscillation period of the dominant Mode
 	PetscReal dFroNorm{}, dInfNorm{};
 	FILE* fLog;
+	std::ofstream fML;
+
 
 	PetscBool flg_autoRankDMD = PETSC_FALSE; // automate dmd matrix manipulation
 
@@ -75,8 +80,8 @@ private:
 		Mat Ur = PETSC_NULL, Sr = PETSC_NULL, Vr = PETSC_NULL;
 		Mat Sr_inv = NULL, W = NULL;
 		Eigen::VectorXcd omega_sorted; // Dominant eigenvalues of the solution updates
-		Eigen::MatrixXcd eigVecs_small;
-		Eigen::VectorXcd eigs;
+		Eigen::MatrixXcd eigVecs_small; //Eigenvectors in the small space of DMD
+		Eigen::VectorXcd eigs; //Dominant amplification factors
 	};
 
 	struct _DATA{
@@ -139,7 +144,7 @@ public:
 	PetscErrorCode lapackMatInv(Mat &A);
 	PetscErrorCode calcUpdateNorm(const _svd &LowSVD,
 			const Mat &mAtilde, const Mat &mX1, const Mat &mX2);
-	PetscErrorCode dotwDMDmodes(const Vec& pVec, int numMode, bool eigen3);
+	PetscErrorCode dotwDMDmodes(const Vec& pVec, int numMode, bool bEPS);
 
 	/* -----  Print functions  ------ */
 	PetscErrorCode printMatMATLAB(std::string sFilename,

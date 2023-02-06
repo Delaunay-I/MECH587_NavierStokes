@@ -17,7 +17,7 @@ DMD::DMD(const Mat *svdMat, PetscReal DT, PetscReal dNorm) :
 
 	/* Opening a log file to write some results, to access after code execution */
 	fLog = fopen("Log.dat", "a");
-
+	fML.open("ML_dataset.csv", std::ios_base::app);
 	/* Set the snapshots matrix and get the sizes of its rows and columns */
 	X.mat = svdMat;
 	/* Data is row-major, computations are based on column-major */
@@ -89,6 +89,8 @@ DMD::~DMD() {
 
 	fprintf(fLog, "\n");
 	fclose(fLog);
+	fML.close();
+
 	PetscFree(row_index);
 	MatDestroy(&X1);
 	MatDestroy(&X2);
@@ -100,7 +102,6 @@ DMD::~DMD() {
 	MatDestroy(&Atilde);
 	MatDestroy(&time_dynamics);
 	VecDestroy(&update);
-
 }
 
 
@@ -168,7 +169,6 @@ PetscErrorCode DMD::prepareData(){
 #ifdef DEBUG_DMD
 	ierr = printMatMATLAB("X1", "X1", X1); CHKERRQ(ierr);
 	ierr = printMatMATLAB("X2", "X2", X2); CHKERRQ(ierr);
-
 #endif
 
 	ierr = PetscFree(X1row_index); CHKERRQ(ierr);
@@ -183,13 +183,12 @@ PetscErrorCode DMD::regression(bool dummyDMD) {
 	SVD svd;
 
 	auto start = std::chrono::steady_clock::now();
-
 	ierr = solveSVD(svd, X1); CHKERRQ(ierr);
 	std::string sMessage = "DMD::regression::SVD()";
 	recordTime(start, sMessage);
-
+#ifdef DEBUG_DMD
 	ierr = testSVD(svd); CHKERRQ(ierr);
-
+#endif
 	// Compute the proper rank if requested
 	if (flg_autoRankDMD) {
 		ierr = computeSVDRank(svd); CHKERRQ(ierr);
@@ -311,9 +310,9 @@ PetscErrorCode DMD::computeMatUpdate() {
 
 PetscErrorCode DMD::applyDMDMatTrans() {
 	PetscErrorCode ierr;
-
-	printMatMATLAB("data" + std::to_string(isDMD_execs), "data", *X.mat);
-
+#ifdef WRITE_SNAP_MAT
+	printMatMATLAB("data_i" + std::to_string(isDMD_execs), "data", *X.mat);
+#endif
 	auto start = std::chrono::steady_clock::now();
 	ierr = prepareData();CHKERRQ(ierr);
 	std::string sMessage = "DMD::prepareData()";
@@ -393,6 +392,7 @@ PetscErrorCode DMD::solveSVD(SVD& svd, Mat& mMatrix){
 
 /*
  * Compute the proper rank for the matrix trasformation update - Automatically
+ * Used with simple DMD automation
  */
 PetscErrorCode DMD::computeSVDRank(SVD &svd) {
 	PetscErrorCode ierr;
@@ -475,14 +475,13 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 	ierr = MatZeroEntries(LowSVD.Vr); CHKERRQ(ierr);
 
 		/* Getting SVD modes column by column */
-	std::ofstream out, regData_S, regData_sigRate1;
+	std::ofstream out;
 	out.open(DEB_TOOL_DIR + sFileName + "-Sr-n" + std::to_string(isDMD_execs) + ".dat");
-	regData_S.open(DEB_TOOL_DIR + "SvLast_data_i" + std::to_string(isDMD_execs) + ".dat", std::ios_base::app);
-	regData_sigRate1.open(DEB_TOOL_DIR + "Sv1_data_i" + std::to_string(isDMD_execs) + ".dat", std::ios_base::app);
+//	regData_S.open(DEB_TOOL_DIR + "SvLast_data_i" + std::to_string(isDMD_execs) + ".dat", std::ios_base::app);
+//	regData_sigRate1.open(DEB_TOOL_DIR + "Sv1_data_i" + std::to_string(isDMD_execs) + ".dat", std::ios_base::app);
 
 	PetscReal sigma1, sigLast, sig2, sigRate;
 
-	std::ofstream fML("ML_dataset.csv");
 
 	for (int j = 0; j < numCols; j++) {
 		PetscInt index = j;
@@ -491,7 +490,7 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 #ifdef ML
 		//Write singularvalues to the ML dataset
 		if (fML.is_open()) {
-			fML << sigma << ',';
+			fML << sigma << ", ";
 		}
 #endif
 
@@ -499,14 +498,9 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 			sig2 = sigma;
 			sigRate = sig2 / sigLast;
 			out << sigma << "\t" << sigRate;
-			if (j <= 9)
-			regData_S << sigRate << std::endl;
 
 			sigRate = sig2 / sigma1;
 			out << "\t" << sigRate << std::endl;
-			if (j <= 9)
-				regData_sigRate1 << sigRate << std::endl;
-
 		}
 		if (j < numCols - 1) {
 			sigLast = sigma;
@@ -522,10 +516,6 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 		ierr = VecGetValues(v, X1Cols, VrCol_index, column_vec); CHKERRQ(ierr);
 		ierr = MatSetValues(LowSVD.Vr, X1Cols, VrCol_index, 1, &index, column_vec, INSERT_VALUES); CHKERRQ(ierr);
 	}
-	fML.close();
-	out.close();
-	regData_S.close();
-	regData_sigRate1.close();
 
 	ierr = MatAssemblyBegin(LowSVD.Ur, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
 	ierr = MatAssemblyEnd(LowSVD.Ur, MAT_FINAL_ASSEMBLY);	CHKERRQ(ierr);
@@ -556,6 +546,8 @@ PetscErrorCode DMD::calcLowRankSVDApprox(SVD &svd, PetscInt rank, _svd &LowSVD, 
 	printMatMATLAB(DEB_TOOL_DIR + sFileName + "-Sr", "Sr", LowSVD.Sr);
 	printMatMATLAB(DEB_TOOL_DIR + sFileName + "-Vr", "Vr", LowSVD.Vr);
 #endif
+
+	out.close();
 
 	PetscFree(column_vec);
 	PetscFree(row_vec);
@@ -612,7 +604,10 @@ PetscErrorCode DMD::calcUpdateNorm(const _svd &LowSVD, const Mat &mAtilde,
 	return ierr;
 }
 
-
+/*
+ * Calculating the eigenvalues of the small space -
+ * which are the amplification factors of the original problem
+ */
 PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFileName, bool calcEigenvectors) {
 	PetscErrorCode ierr;
 	PetscInt nconv;
@@ -629,7 +624,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	ierr = EPSSetType(eps, EPSLAPACK); CHKERRQ(ierr);
 	ierr = EPSSetWhichEigenpairs(eps, EPS_LARGEST_REAL); CHKERRQ(ierr);
 	ierr = EPSSetDimensions(eps, rank, PETSC_DEFAULT, PETSC_DEFAULT); CHKERRQ(ierr);
-	ierr = EPSSetTolerances(eps, 1e-16, 100); CHKERRQ(ierr);
+	ierr = EPSSetTolerances(eps, 1e-10, 10); CHKERRQ(ierr);
 
 	ierr = EPSSolve(eps);	CHKERRQ(ierr);
 	ierr = EPSGetConverged(eps, &nconv); CHKERRQ(ierr);
@@ -678,11 +673,10 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	std::string sName = DEB_TOOL_DIR + sFileName + "-eigs_n" + std::to_string(isDMD_execs) + ".dat";
 	fEigs = fopen(sName.data(), "w");
 
-	ierr = PetscPrintf(PETSC_COMM_WORLD, "\nExtracting %s...\n", sFileName.c_str()); CHKERRQ(ierr);
+	ierr = PetscPrintf(PETSC_COMM_WORLD, "Eigendecomposition of %s...\n", sFileName.c_str()); CHKERRQ(ierr);
 
 	std::fprintf(fEigs, "VARIABLES = \"NUM\" \"sigma-Real\" \"sigma-Imag\" \"Rel. Error\" \"Eig-Real\""
 			"\"Eig-Imag\"\n");
-
 
 	LowSVD.eigVecs_small.resize(rank, rank);
 	LowSVD.eigs.resize(rank);
@@ -710,6 +704,14 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 		LowSVD.eigVecs_small.col(i).real() << evReal;
 		LowSVD.eigVecs_small.col(i).imag() << evImag;
 	}
+
+#ifdef ML
+	Eigen::IOFormat CSVFmt(Eigen::FullPrecision, Eigen::DontAlignCols, ", ");
+	if (fML.is_open()) {
+		fML << LowSVD.eigs.transpose().real().format(CSVFmt) << ", ";
+		fML << LowSVD.omega_sorted.transpose().real().format(CSVFmt) << ", ";
+	}
+#endif
 
 	std::fprintf(fEigs, "\n");
 	std::fclose(fEigs);
@@ -895,15 +897,22 @@ void DMD::recordTime(std::chrono::steady_clock::time_point start,
 
 PetscErrorCode DMD::calcDMDmodes(){
 	PetscErrorCode ierr {};
-	Eigen::MatrixXd eX2, eVr, eAtilde, eSr_inv;
+	Eigen::MatrixXd eX2, eVr, eAtilde, eSr_inv, eSr;
 
 	eX2 = pMat_to_eMat_double(X2);
 	eVr = pMat_to_eMat_double(lrSVD.Vr);
 	eAtilde = pMat_to_eMat_double(Atilde);
 	eSr_inv = pMat_to_eMat_double(lrSVD.Sr_inv);
+	eSr = pMat_to_eMat_double(lrSVD.Sr);
 
-
-	ierr = printMatMATLAB("Atilde", "Atilde", Atilde); CHKERRQ(ierr);
+#ifdef ML
+	Eigen::MatrixXcd mDMD_energy = lrSVD.eigVecs_small.inverse() * eSr * eVr;
+	Eigen::ArrayXd DMD_energy_norms = mDMD_energy.real().rowwise().norm();
+	Eigen::IOFormat CSVFmt(Eigen::FullPrecision, Eigen::DontAlignCols, ", ");
+	if (fML.is_open()) {
+		fML << DMD_energy_norms.transpose().format(CSVFmt) << ", ";
+	}
+#endif
 
 //	Eigen::EigenSolver<Eigen::MatrixXd> eigenSystem;
 //	eigenSystem.compute(eAtilde);
@@ -927,11 +936,11 @@ PetscErrorCode DMD::calcDMDmodes(){
 //	eigenPhi = eX2 * eVr * eSr_inv * eW;
 
 	{
-		std::ofstream fPhi("Phi_DMD_"+std::to_string(isDMD_execs)+".dat");
-		if (fPhi.is_open()) {
-			fPhi << epsPhi.real() << '\n';
-		}
-		fPhi.close();
+//		std::ofstream fPhi("Phi_DMD_"+std::to_string(isDMD_execs)+".dat");
+//		if (fPhi.is_open()) {
+//			fPhi << epsPhi.real() << '\n';
+//		}
+//		fPhi.close();
 
 //		lrSVD.evOmega = eivals.array().log();
 //		lrSVD.evOmega /= dt;
@@ -952,25 +961,22 @@ PetscErrorCode DMD::calcDMDmodes(){
 	}
 
 
-
+#ifdef ML
 	//---- Computing the time dynamics of the DMD modes -----//
 	Eigen::MatrixXd eX1 = pMat_to_eMat_double(X1);
 	Eigen::VectorXd V = eX1.col(0);
 
 //	 Solving the least square problem
-//	Eigen::VectorXcd b = epsPhi.householderQr().solve(eX1.col(0));
 	Eigen::VectorXcd b = (epsPhi.transpose() * epsPhi).ldlt().solve(epsPhi.transpose() * V);
-
-	std::cout << "solution of Eigen3 Lstq:" << b << std::endl;
-
-	// this is for the implementation of an array containing the time-dynamics
-//	Eigen::VectorXi t = Eigen::VectorXi::LinSpaced(1000, 0, 1000);
-//	std::cout << "time is:" << t << std::endl;
 
 	//But I only need the time-dynamics at some time in far future
 	//So don't need an array, and need only one far future time-step
 	Eigen::ArrayXd time_dynamics = abs(b.array() * (lrSVD.omega_sorted.array()*1000).exp());
-	std::cout << "time-dynamics is:" << time_dynamics << std::endl;
+
+	if (fML.is_open()) {
+		fML << time_dynamics.transpose().format(CSVFmt) << ", ";
+	}
+#endif
 
 	return ierr;
 }
@@ -997,26 +1003,25 @@ PetscErrorCode DMD::dotwDMDmodes(const Vec& pVec, int numMode, bool bEPS){
 	return ierr;
 }
 
+
 Eigen::MatrixXd pMat_to_eMat_double(const Mat &pMat){
-	PetscInt nRows{0}, nCols{0};
-	std::vector<double> matElements;
-	std::vector<int> col_index, row_index;
+	PetscInt rows{}, cols{};
+	MatGetSize(pMat, &rows, &cols);
+	std::vector<PetscInt> row_index, col_index;
+	std::vector<double> mValues;
 
-	Mat B;
-	MatTranspose(pMat, MAT_INITIAL_MATRIX, &B);
-	MatGetSize(B, &nRows, &nCols);
-
-	for (int i = 0; i < nCols; i++) {
-		col_index.push_back(i);
+	for (int i = 0; i < rows; i++) {
+		row_index.push_back(i);
 	}
-	for (int j = 0; j < nRows; j++) {
-			row_index.push_back(j);
-			for (int i = 0; i < nCols; i++) {
-				matElements.push_back(0.0);
-			}
+	for (int j = 0; j < cols; j++) {
+		col_index.push_back(j);
+		for (int i = 0; i < rows; i++) {
+			mValues.push_back(0.0);
 		}
-	MatGetValues(B, nRows, row_index.data(), nCols, col_index.data(), matElements.data());
-	Eigen::Map<Eigen::MatrixXd> eMat(matElements.data(), nCols, nRows);
+	}
+
+	MatGetValues(pMat, rows, row_index.data(), cols, col_index.data(), mValues.data());
+	Eigen::Map<Eigen::MatrixXd> eMat(mValues.data(), rows, cols);
 
 	return eMat;
 }
@@ -1037,6 +1042,7 @@ Eigen::VectorXd pVec_to_eVec_double(const Vec &pVec){
 
 	return eVec;
 }
+
 
 // Deprecated
 //PetscErrorCode DMD::computeUpdate(PetscInt iMode){

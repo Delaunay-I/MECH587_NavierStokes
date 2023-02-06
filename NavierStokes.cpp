@@ -506,8 +506,12 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 	PetscErrorCode ierr;
 	int iter { 1 };
 	double l2norm{};
+	bool DMD_executed = false;
 
 	FILE *residual, *solution;
+	std::ofstream fML;
+	fML.open("ML_dataset.csv", std::ios_base::app);
+
 	residual = fopen("Residual.dat", "w");
 	solution = fopen("solution.dat", "w");
 	fprintf(solution, "%4s %14s %14s %14s\n", "iter", "dP", "dU", "dV");
@@ -555,6 +559,12 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 			}
 
 			if ((iter == dmdIter[iDMD] && iter != numIters) && flg_DMD) {
+#ifdef ML
+				DMD_executed = true;
+				if (fML.is_open()) {
+					fML << "Norm1_" <<l2norm << ", ";
+				}
+#endif
 
 				auto start = std::chrono::steady_clock::now();
 
@@ -566,7 +576,7 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				// Recording the update before DMD
 				ierr = VecDuplicate(vvGlobal, &vUpdBefore); CHKERRQ(ierr);
 				ierr= VecCopy(vvGlobal, vUpdBefore); CHKERRQ(ierr);
-				ierr = printVecMATLAB("update-before" + std::to_string(dmdIter[iDMD]), "vupdBefore", vUpdBefore); CHKERRQ(ierr);
+//				ierr = printVecMATLAB("update-before" + std::to_string(dmdIter[iDMD]), "vupdBefore", vUpdBefore); CHKERRQ(ierr);
 
 				ierr = VecNormalize(vUpdBefore, NULL); CHKERRQ(ierr);
 
@@ -579,10 +589,10 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				vUpdate = a_dmd.vgetUpdate();
 
 				// getting the dot product of the update before DMD and the DMD modes - for eigen3
-				bool bEPS = true;
-				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
-					a_dmd.dotwDMDmodes(vUpdBefore, i, bEPS);
-				}
+//				bool bEPS = true;
+//				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
+//					a_dmd.dotwDMDmodes(vUpdBefore, i, bEPS);
+//				}
 
 				{
 					ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
@@ -612,23 +622,35 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 
 			}
 
-			if ((iter == dmdIter[iDMD-1] + 1)){
-				ierr = VecDuplicate(vvGlobal, &vUpdAfter); CHKERRQ(ierr);
-				ierr= VecCopy(vvGlobal, vUpdAfter); CHKERRQ(ierr);
-				ierr = VecNormalize(vUpdAfter, NULL); CHKERRQ(ierr);
-
-				double dot_BD{}, dot_BA{}, dot_AD{};
-				ierr = VecDot(vUpdBefore, tmpDMDUpdate, &dot_BD); CHKERRQ(ierr);
-				ierr = VecDot(vUpdBefore, vUpdAfter, &dot_BA); CHKERRQ(ierr);
-				ierr = VecDot(vUpdAfter, tmpDMDUpdate, &dot_AD); CHKERRQ(ierr);
-
-				FILE *fLOG;
-				fLOG = fopen("Log.dat", "a");
-				fprintf(fLOG, "<Before, DMD> = %5f\n", dot_BD);
-				fprintf(fLOG, "<Before, After> = %5f\n", dot_BA);
-				fprintf(fLOG, "<After, DMD> = %5f\n", dot_AD);
-				fclose(fLOG);
+//			if ((iter == dmdIter[iDMD-1] + 1)){
+//				ierr = VecDuplicate(vvGlobal, &vUpdAfter); CHKERRQ(ierr);
+//				ierr= VecCopy(vvGlobal, vUpdAfter); CHKERRQ(ierr);
+//				ierr = VecNormalize(vUpdAfter, NULL); CHKERRQ(ierr);
+//
+//				double dot_BD{}, dot_BA{}, dot_AD{};
+//				ierr = VecDot(vUpdBefore, tmpDMDUpdate, &dot_BD); CHKERRQ(ierr);
+//				ierr = VecDot(vUpdBefore, vUpdAfter, &dot_BA); CHKERRQ(ierr);
+//				ierr = VecDot(vUpdAfter, tmpDMDUpdate, &dot_AD); CHKERRQ(ierr);
+//
+//				FILE *fLOG;
+//				fLOG = fopen("Log.dat", "a");
+//				fprintf(fLOG, "<Before, DMD> = %5f\n", dot_BD);
+//				fprintf(fLOG, "<Before, After> = %5f\n", dot_BA);
+//				fprintf(fLOG, "<After, DMD> = %5f\n", dot_AD);
+//				fclose(fLOG);
+//			}
+#ifdef ML
+			if ((iter == (dmdIter[iDMD-1] + 10) && iter != numIters) && flg_DMD) {
+				if (fML.is_open()) {
+					fML << "Norm2_" <<l2norm << '\n';
+				}
+				goto outNest;
+			} else if (l2norm < 1.e-10 && DMD_executed) {
+				if (fML.is_open()) {
+					fML << "CONVERGED\n";
+				}
 			}
+#endif
 
 			if (l2norm < 1.e-10 || iter == numIters) {
 				ierr = PetscPrintf(PETSC_COMM_WORLD,
@@ -639,11 +661,13 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 		}
 	}
 	outNest:
+	fML.close();
 	fclose(residual);
 	fclose(solution);
 	ierr = MatDestroy(&snap.mat); CHKERRQ(ierr);
 	ierr = VecDestroy(&vvGlobal); CHKERRQ(ierr);
 	ierr = VecDestroy(&vUpdBefore); CHKERRQ(ierr);
+	ierr = VecDestroy(&vUpdAfter); CHKERRQ(ierr);
 	ierr = VecDestroy(&tmpDMDUpdate); CHKERRQ(ierr);
 
 
