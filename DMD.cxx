@@ -708,7 +708,7 @@ PetscErrorCode DMD::calcEigenvalues(_svd& LowSVD, Mat& matrix, std::string sFile
 	Eigen::IOFormat CSVFmt(Eigen::FullPrecision, Eigen::DontAlignCols, ", ");
 	if (fML.is_open()) {
 		fML << LowSVD.eigs.transpose().real().format(CSVFmt) << ", ";
-		fML << LowSVD.omega_sorted.transpose().real().format(CSVFmt) << ", ";
+		fML << LowSVD.omega_sorted.matrix().transpose().real().format(CSVFmt) << ", ";
 	}
 #endif
 
@@ -905,7 +905,7 @@ PetscErrorCode DMD::calcDMDmodes(){
 
 #ifdef ML
 	Eigen::MatrixXd eSr = pMat_to_eMat_double(lrSVD.Sr);
-	Eigen::MatrixXcd mDMD_energy = lrSVD.eigVecs_small.inverse() * eSr * eVr;
+	Eigen::MatrixXcd mDMD_energy = lrSVD.eigVecs_small.inverse() * eSr * eVr.transpose();
 	Eigen::ArrayXd DMD_energy_norms = mDMD_energy.real().rowwise().norm();
 	Eigen::IOFormat CSVFmt(Eigen::FullPrecision, Eigen::DontAlignCols, ", ");
 	if (fML.is_open()) {
@@ -970,7 +970,7 @@ PetscErrorCode DMD::calcDMDmodes(){
 
 	//But I only need the time-dynamics at some time in far future
 	//So don't need an array, and need only one far future time-step
-	Eigen::ArrayXd time_dynamics = abs(b.array() * (lrSVD.omega_sorted.array()*1000).exp());
+	Eigen::ArrayXd time_dynamics = abs(b.array() * (lrSVD.omega_sorted*1000).exp());
 
 	if (fML.is_open()) {
 		fML << time_dynamics.transpose().format(CSVFmt) << ", ";

@@ -79,7 +79,7 @@ private:
 	struct _svd{
 		Mat Ur = PETSC_NULL, Sr = PETSC_NULL, Vr = PETSC_NULL;
 		Mat Sr_inv = NULL, W = NULL;
-		Eigen::VectorXcd omega_sorted; // Dominant eigenvalues of the solution updates
+		Eigen::ArrayXcd omega_sorted; // Dominant eigenvalues of the solution updates
 		Eigen::MatrixXcd eigVecs_small; //Eigenvectors in the small space of DMD
 		Eigen::VectorXcd eigs; //Dominant amplification factors
 	};
