@@ -9,6 +9,9 @@
 #include <slepcsvd.h>
 #include <slepceps.h>
 
+#include <Python.h>
+
+
 struct _snapshots_type{
 	Mat mat=PETSC_NULL;
 	PetscInt iNumRows, iNumCols;
@@ -458,9 +461,11 @@ int main(int argc, char **argv) {
 	ierr = SlepcInitialize(&argc, &argv, (char*) 0, (char*) 0); CHKERRQ(ierr);
 	if (ierr)
 		return ierr;
+    Py_Initialize();
+
 
 	PetscInt numIters, nDMD, *dmdIter, iDummyDMDIter, isnapFreq;
-	PetscBool flg_DMD, flg_dmdAuto;
+	PetscBool flg_DMD, flg_dmdAuto = PETSC_FALSE;
 
 	auto start = std::chrono::steady_clock::now();
 
@@ -497,6 +502,7 @@ int main(int argc, char **argv) {
 	memory_deallocate();
 	ierr = PetscFinalize(); CHKERRQ(ierr);
 	ierr = SlepcFinalize(); CHKERRQ(ierr);
+    Py_Finalize();
 
 	return 0;
 }
@@ -522,6 +528,7 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 	ierr = VecCreateSeq(PETSC_COMM_SELF, IMAX * JMAX * 3, &vvGlobal); CHKERRQ(ierr);
 
 	for (int iDMD = 0; iDMD < nDMD + 1; iDMD++) {
+		DMD_executed = false;
 		for (; iter <= dmdIter[iDMD]; iter++) {
 
 			calc_residual(Soln, FI);
@@ -529,9 +536,9 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 
 			ApproximateFactorization(Soln, FI);
 
-			fprintf(residual, "%4d %12.5G\t%.i\n", iter, l2norm, 0);
-
 			l2norm = get_l2norm(solution, iter);
+
+			fprintf(residual, "%4d %12.5G\t%.i\n", iter, l2norm, 0);
 
 			ierr = PetscPrintf(PETSC_COMM_WORLD,
 					"iter: %i dT: %3f fnorm: %6e\n", iter, dT, l2norm);
@@ -562,7 +569,7 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 #ifdef ML
 				DMD_executed = true;
 				if (fML.is_open()) {
-					fML << "Norm1_" <<l2norm << ", ";
+					fML << "Norm1_" <<l2norm << ",";
 				}
 #endif
 
@@ -589,10 +596,10 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 				vUpdate = a_dmd.vgetUpdate();
 
 				// getting the dot product of the update before DMD and the DMD modes - for eigen3
-				bool bEPS = true;
-				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
-					a_dmd.dotwDMDmodes(vUpdBefore, i, bEPS);
-				}
+//				bool bEPS = true;
+//				for (int i = 0; i < a_dmd.iGetSVDRank(); i = i +2){
+//					a_dmd.dotwDMDmodes(vUpdBefore, i, bEPS);
+//				}
 
 				{
 					ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
@@ -639,19 +646,52 @@ PetscErrorCode TimeAdvance(PetscInt &isnapFreq, PetscInt &nDMD, PetscInt &numIte
 //				fprintf(fLOG, "<After, DMD> = %5f\n", dot_AD);
 //				fclose(fLOG);
 //			}
+
+
 #ifdef ML
-			if ((iter == (dmdIter[iDMD-1] + 10) && iter != numIters) && flg_DMD) {
-				if (fML.is_open()) {
-					fML << "Norm2_" <<l2norm << '\n';
+			if (iter >= dmdIter[0] && iter < dmdIter[0] + 11) {
+				if ((iter == (dmdIter[0] + 10) && iter != numIters)
+						&& flg_DMD) {
+					if (fML.is_open()) {
+						fML << "Norm2_" << l2norm << std::endl;
+					}
+				} else if (l2norm < 1.e-10 && DMD_executed) {
+					if (fML.is_open()) {
+						l2norm = get_l2norm(solution, iter);
+						fML << "CONVERGED_" << l2norm << std::endl;
+					}
 				}
-				goto outNest;
-			} else if (l2norm < 1.e-10 && DMD_executed) {
-				if (fML.is_open()) {
-					l2norm = get_l2norm(solution, iter);
-					fML << "CONVERGED" << l2norm <<"\n";
+			} else if (iter >= dmdIter[1] && iter < dmdIter[1] + 11) {
+				if ((iter == (dmdIter[1] + 10) && iter != numIters)
+						&& flg_DMD) {
+					if (fML.is_open()) {
+						fML << "Norm2_" << l2norm << std::endl;
+					}
+					goto outNest;
+				} else if (l2norm < 1.e-10 && DMD_executed) {
+					if (fML.is_open()) {
+						l2norm = get_l2norm(solution, iter);
+						fML << "CONVERGED_" << l2norm << std::endl;
+					}
 				}
 			}
+//				else if (iter == dmdIter[2] + 10) {
+//				if ((iter == (dmdIter[2] + 10) && iter != numIters)
+//						&& flg_DMD) {
+//					if (fML.is_open()) {
+//						fML << "Norm2_" << l2norm << std::endl;
+//					}
+//					goto outNest;
+//				} else if (l2norm < 1.e-10 && DMD_executed) {
+//					l2norm = get_l2norm(solution, iter);
+//					if (fML.is_open()) {
+//						fML << "CONVERGED_" << l2norm << std::endl;
+//					}
+//				}
+//			}
 #endif
+
+
 
 			if (l2norm < 1.e-10 || iter == numIters) {
 				ierr = PetscPrintf(PETSC_COMM_WORLD,
@@ -791,29 +831,16 @@ PetscErrorCode TimeAdvanceSmart(PetscInt & isnapFreq, PetscInt &numIters, PetscI
 			Vec vUpdate { };
 			vUpdate = a_dmd.vgetUpdate();
 
-			Vec tmpDMDUpdate{};
-			ierr = VecDuplicate(vUpdate, &tmpDMDUpdate); CHKERRQ(ierr);
-			ierr = VecCopy(vUpdate, tmpDMDUpdate); CHKERRQ(ierr);
-			ierr = VecNormalize(tmpDMDUpdate, NULL); CHKERRQ(ierr);
-			PetscReal dot_BD{};
-			ierr = VecDot(tmpDMDUpdate, vUpdBefore, &dot_BD); CHKERRQ(ierr);
-
-			printf("Correlation of DMD update and previous solver update: %f \n", dot_BD);
-			if(dot_BD > CORETHRESH){
-				printf("Applying the computed update.\n\n");
-
+			if (vUpdate != NULL)
 			for (int i = 1, index = 0; i <= IMAX; i++)
 				for (int j = 1; j <= JMAX; j++)
 					for (int k = 0; k < 3; k++, index++) {
 						PetscScalar value { };
-						ierr = VecGetValues(vUpdate, 1, &index, &value);
-						CHKERRQ(ierr);
+						ierr = VecGetValues(vUpdate, 1, &index, &value); CHKERRQ(ierr);
 						FI[i][j][k] = value;
 						Soln[i][j][k] += value;
 					}
-			} else {
-				printf("DMD update discarded....\n");
-			}
+
 			std::string sMessage = "Total DMD time";
 			a_dmd.recordTime(start, sMessage);
 		}
@@ -921,14 +948,16 @@ PetscErrorCode readOpts(PetscReal &dT, PetscInt &isnapFreq, PetscInt &max_iter_t
 
 		ierr = PetscOptionsGetInt(NULL, PETSC_NULL, "-DummyDMDIter",
 				&iDummyDMDIter, &flg); CHKERRQ(ierr);
-	if (!flg){
-		PetscErrorPrintf("Missing -DummyDMDIter flag!\n");
-		iDummyDMDIter = 250;
-	}
+		if (!flg) {
+			PetscErrorPrintf("Missing -DummyDMDIter flag!\n");
+			iDummyDMDIter = 250;
+		}
+	} else {
 
-	nDMD = 0;
-	ierr = PetscMalloc(nDMD + 1, &dmdIter); CHKERRQ(ierr);
-	dmdIter[nDMD] = max_iter_total;
+		nDMD = 0;
+		ierr = PetscMalloc(nDMD + 1, &dmdIter);
+		CHKERRQ(ierr);
+		dmdIter[nDMD] = max_iter_total;
 	}
 	return ierr;
 }
@@ -1102,8 +1131,7 @@ void Linear_Regression(std::vector<T> indep_var, std::deque<T> dep_var, M &a_1, 
 {
 
 	int n = indep_var.size();
-	int n_test = dep_var.size();
-	assert(n==n_test && "The size of dependent and independent variables are not equal, so we cannot do regression\n");
+	assert(n==dep_var.size() && "The size of dependent and independent variables are not equal, so we cannot do regression\n");
 
 	for (auto it = dep_var.begin(); it != dep_var.end(); ++it)
 		*it = log(*it);
@@ -1124,6 +1152,90 @@ void Linear_Regression(std::vector<T> indep_var, std::deque<T> dep_var, M &a_1, 
 
 	a_1 = exp(a_1);
 
+}
+
+
+// Define the Huber loss function
+double huber_loss(double e, double delta)
+{
+  if (std::abs(e) <= delta) {
+    return 0.5 * e * e;
+  }
+  else {
+    return delta * (std::abs(e) - 0.5 * delta);
+  }
+}
+
+// Define the derivative of the Huber loss function
+double huber_loss_derivative(double e, double delta)
+{
+  if (std::abs(e) <= delta) {
+    return e;
+  }
+  else {
+    return delta * std::copysign(1.0, e);
+  }
+}
+
+// Perform robust linear regression using the IRLS algorithm with the Huber loss function
+void robust_regression(const std::vector<double> &x,
+		const std::deque<double> &y, double &slope, double &intercept) {
+
+//	auto startTime =	std::chrono::steady_clock::now();
+
+	using namespace Eigen;
+
+	const int n = y.size();
+	MatrixXd A(n, 2);
+	VectorXd b(n);
+	for (int i = 0; i < n; ++i) {
+		A(i, 0) = x[i];
+		A(i, 1) = 1.0;
+		b(i) = log(y[i]);
+	}
+
+	// Initialize the model parameters
+	Vector2d theta(1.0, 0.0);
+
+	// Initialize the IRLS algorithm
+	const double huber_delta = 1.345; // Huber threshold parameter
+	const int max_iterations = 100; // Maximum number of iterations
+	const double convergence_tolerance = 1e-6; // Convergence tolerance
+	double prev_cost = std::numeric_limits<double>::max();
+	for (int iter = 0; iter < max_iterations; ++iter) {
+		// Compute the residuals and the weights
+		VectorXd e = b - A * theta;
+		VectorXd w(n);
+		for (int i = 0; i < n; ++i) {
+			w(i) = huber_loss_derivative(e(i), huber_delta);
+		}
+
+		// Compute the diagonal weight matrix
+		MatrixXd W = w.asDiagonal();
+
+		// Perform weighted least squares to obtain the new estimate of theta
+		theta = (A.transpose() * W * A).ldlt().solve(A.transpose() * W * b);
+
+		// Compute the cost
+		double cost = 0.0;
+		for (int i = 0; i < n; ++i) {
+			cost += huber_loss(e(i), huber_delta);
+		}
+
+		// Check for convergence
+		if (std::abs(cost - prev_cost) < convergence_tolerance) {
+			break;
+		}
+		prev_cost = cost;
+	}
+
+  // Extract the slope and intercept
+  slope = theta(0);
+  intercept = theta(1);
+
+//	auto stop =	std::chrono::steady_clock::now();
+//	std::chrono::duration<double, std::milli> duration = stop - startTime;
+//	std::cout << "robust_reg: " << duration.count() << "ms" << std::endl;
 }
 
 
