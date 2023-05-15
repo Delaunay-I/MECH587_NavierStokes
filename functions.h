@@ -21,7 +21,7 @@ extern double dT;
 #define MAX_ITER 2500
 
 /* setting dimensions of the domain */
-#define Width 5.0
+#define Width  10.0
 #define Height 1.0
 
 #define dX (Width / IMAX)
@@ -101,6 +101,11 @@ void write_sym_plot_u(FILE* file, const char* filename, double*** array1d, int l
 
 template <class T , class M>
 void Linear_Regression(std::vector<T> indep_var, std::deque<T> dep_var, M &a_1, M &a_2);
+void robust_regression(const std::vector<double> &x,
+		const std::deque<double> &y, double &slope, double &intercept);
+
+double pScript(const std::vector<double>& feats);
+
 
 #endif // !FUNCTIONS_H
 

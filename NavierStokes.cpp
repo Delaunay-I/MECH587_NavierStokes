@@ -720,6 +720,8 @@ PetscErrorCode TimeAdvanceSmart(PetscInt & isnapFreq, PetscInt &numIters, PetscI
 	PetscErrorCode ierr;
 	int iter { 1 };
 	double l2norm{};
+	int DMD_update_counter = 0;
+
 
 	FILE *residual, *solution;
 	residual = fopen("Residual.dat", "w");
@@ -764,6 +766,7 @@ PetscErrorCode TimeAdvanceSmart(PetscInt & isnapFreq, PetscInt &numIters, PetscI
 				LRx.push_back(j);
 			}
 		}
+		fprintf(residual, "%4d %12.5G\n", iter, l2norm);
 
 		if (iter >= iDummyDMDIter)
 			dResWin.push_back(l2norm);
@@ -774,17 +777,17 @@ PetscErrorCode TimeAdvanceSmart(PetscInt & isnapFreq, PetscInt &numIters, PetscI
 
 			Linear_Regression(LRx, dResWin, slope, intercept);
 
-			if (iter % (iSCP) == 0) {
+			if ((iter + 1) % iSCP == 0) {
+				robust_regression(LRx, dResWin, slope_old, intercept);
+				Linear_Regression(LRx, dResWin, slope, intercept);
+			} else if (iter % (iSCP) == 0) {
+				robust_regression(LRx, dResWin, slope, intercept);
+				Linear_Regression(LRx, dResWin, slope, intercept);
 				slope_ratio = slope / slope_old;
-				slope_old = slope;
 			} else {
+				// reseting the slope ratio - not to activate DMD unwanted at each iteration
 				slope_ratio = -1;
 			}
-
-			fprintf(residual, "%4d %12.5G\t %.8G\t %8.5G\n", iter, l2norm, slope, slope_ratio);
-
-		} else {
-			fprintf(residual, "%4d %12.5G\t%.i\n", iter, l2norm, 0);
 		}
 
 		ierr = PetscPrintf(PETSC_COMM_WORLD, "iter: %i dT: %3f fnorm: %6e\n",
